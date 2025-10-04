@@ -10,3 +10,12 @@ dependencies = [
     "seaborn>=0.13.2",
 ]
 requires-python = ">=3.13"
+
+[tool.pyright]
+include = ["**.py"]
+exclude = [
+    "**/site-packages/**",
+    "**/.venv/**",
+    "**/node_modules/**",
+    "**/__pycache__/**"
+]
