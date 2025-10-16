@@ -25,14 +25,14 @@ def lcg(m, a, c, x0):
         yield x
 
 
-def numpy_rng(m, __a=None, __c=None, __x0=None):
+def numpy_rng(m, _a=None, _c=None, _x0=None):
     """
     Adapter for numpy's random number generator to match the LCG interface.
 
     :param m: upper bound for random numbers (exclusive)
-    :param __a: unused (to match LCG interface)
-    :param __c: unused (to match LCG interface)
-    :param __x0: unused (to match LCG interface)
+    :param _a: unused (to match LCG interface)
+    :param _c: unused (to match LCG interface)
+    :param _x0: unused (to match LCG interface)
     :return: generator that yields the next random number in the range [0, m)
     """
 
