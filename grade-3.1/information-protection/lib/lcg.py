@@ -6,7 +6,7 @@ import numpy as np
 from time import time
 
 
-def lcg(m, a, c, x0):
+def lcg(m: int, a: int, c: int, x0: int):
     """
     Linear congruential generator (LCG)
     X[n+1] = (a * X[n] + c) mod m
