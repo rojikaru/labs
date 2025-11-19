@@ -85,7 +85,7 @@ def rc5_decrypt_block(ciphertext: tuple[int, int], S: list):
 def encrypt_cbc(data: bytes, key: bytes, iv: bytes | None = None) -> bytes:
     """Optimized CBC encryption"""
     data = pad(data)
-    S = rc5_key_expansion(key)  # Precompute once!
+    S = rc5_key_expansion(key)
     C = int(np.ceil(len(key) / (W // 8)))
 
     # Generate IV
