@@ -11,7 +11,7 @@ LabName = Literal[
     "Lab 2: Cryptographic hash functions (MD5)",
     "Lab 3: Encryption algorithms (RC5)",
     "Lab 4: Encryption algorithms (RSA)",
-    "Lab 5: Digital signatures (RSA)",
+    "Lab 5: Digital signatures (DSS)",
 ]
 LAB_LIST = list(get_args(LabName))
 

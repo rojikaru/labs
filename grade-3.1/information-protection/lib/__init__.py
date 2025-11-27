@@ -14,6 +14,19 @@ from .rsa import (
     rsa_encrypt_file,
     rsa_decrypt_file,
 )
+from .dsa import (
+    generate_dsa_keys,
+    save_private_key as save_dsa_private_key,
+    save_public_key as save_dsa_public_key,
+    load_private_key as load_dsa_private_key,
+    load_public_key as load_dsa_public_key,
+    sign_data,
+    sign_data_prehashed,
+    verify_signature,
+    verify_signature_prehashed,
+    signature_to_hex,
+    signature_from_hex,
+)
 
 
 __all__ = [
@@ -31,4 +44,15 @@ __all__ = [
     "load_public_key",
     "rsa_encrypt_file",
     "rsa_decrypt_file",
+    "generate_dsa_keys",
+    "save_dsa_private_key",
+    "save_dsa_public_key",
+    "load_dsa_private_key",
+    "load_dsa_public_key",
+    "sign_data",
+    "sign_data_prehashed",
+    "verify_signature",
+    "verify_signature_prehashed",
+    "signature_to_hex",
+    "signature_from_hex",
 ]
