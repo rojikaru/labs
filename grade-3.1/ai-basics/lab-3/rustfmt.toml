@@ -1,0 +1,15 @@
+max_width = 80
+hard_tabs = false
+tab_spaces = 4
+newline_style = "Unix"
+use_small_heuristics = "Max"
+fn_call_width = 60
+struct_lit_width = 60
+array_width = 60
+chain_width = 60
+indent_style = "Block"
+format_code_in_doc_comments = true
+wrap_comments = true
+comment_width = 80
+merge_imports = true
+reorder_imports = true
