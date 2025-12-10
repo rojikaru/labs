@@ -58,7 +58,7 @@ impl Rng {
 
     // Generate normal distribution using Box-Muller transform
     fn gen_normal(&mut self, mean: f64, std_dev: f64) -> f64 {
-        let u1 = self.next_f64().max(1e-15); // Avoid log(0)
+        let u1 = self.next_f64().max(f64::EPSILON); // Avoid log(0)
         let u2 = self.next_f64();
         let z = (-2.0 * u1.ln()).sqrt() * (2.0 * PI * u2).cos();
         mean + z * std_dev
@@ -86,6 +86,7 @@ struct Edge {
     dy: f64,
 }
 
+#[derive(Clone, Copy)]
 struct BoundingBox {
     min_x: f64,
     max_x: f64,
@@ -111,12 +112,12 @@ impl BoundingBox {
     fn from_points(points: &[Coord2D]) -> Self {
         let (min_x, max_x, min_y, max_y) = points.iter().fold(
             (f64::MAX, f64::MIN, f64::MAX, f64::MIN),
-            |(min_x, max_x, min_y, max_y), p| {
+            |(min_x, max_x, min_y, max_y), point| {
                 (
-                    min_x.min(p.x),
-                    max_x.max(p.x),
-                    min_y.min(p.y),
-                    max_y.max(p.y),
+                    min_x.min(point.x),
+                    max_x.max(point.x),
+                    min_y.min(point.y),
+                    max_y.max(point.y),
                 )
             },
         );
@@ -133,17 +134,17 @@ struct Polygon {
 
 impl Polygon {
     #[inline(always)]
-    fn new(polygon: Vec<Coord2D>) -> Self {
-        let n = polygon.len();
+    fn new(vertices: Vec<Coord2D>) -> Self {
+        let n = vertices.len();
         let edges: Vec<Edge> = (0..n)
             .map(|i| {
-                let p1 = polygon[i];
-                let p2 = polygon[(i + 1) % n];
+                let p1 = vertices[i];
+                let p2 = vertices[(i + 1) % n];
                 Edge { p1, dx: p2.x - p1.x, dy: p2.y - p1.y }
             })
             .collect();
-        let bbox = BoundingBox::from_points(&polygon);
-        Self { vertices: polygon, edges, bbox }
+        let bbox = BoundingBox::from_points(&vertices);
+        Self { vertices, edges, bbox }
     }
 
     // Check if point is inside polygon using ray casting (with bbox optimization)
@@ -184,6 +185,30 @@ impl Polygon {
             }
         }
     }
+
+    // Calculate distance from point to wall in direction given by angle (using cached edges)
+    #[inline]
+    fn ray_cast_for(&self, point: Coord2D, angle: f64) -> f64 {
+        let (dy, dx) = angle.sin_cos();
+        self.edges.iter().fold(f64::MAX, |min_dist, edge| {
+            let denom = dx * edge.dy - dy * edge.dx;
+            if denom.abs() < f64::EPSILON {
+                return min_dist;
+            }
+
+            let diff_x = edge.p1.x - point.x;
+            let diff_y = edge.p1.y - point.y;
+
+            let t = (diff_x * edge.dy - diff_y * edge.dx) / denom;
+            let s = (diff_x * dy - diff_y * dx) / denom;
+
+            if t > f64::EPSILON && s >= 0.0 && s <= 1.0 {
+                min_dist.min(t)
+            } else {
+                min_dist
+            }
+        })
+    }
 }
 
 struct Movement {
@@ -216,32 +241,6 @@ impl Movement {
     }
 }
 
-// Calculate distance from point to wall in direction given by angle (using cached edges)
-#[inline]
-fn ray_cast(polygon: &Polygon, point: Coord2D, angle: f64) -> f64 {
-    let dx = angle.cos();
-    let dy = angle.sin();
-
-    polygon.edges.iter().fold(f64::MAX, |min_dist, edge| {
-        let denom = dx * edge.dy - dy * edge.dx;
-        if denom.abs() < 1e-12 {
-            return min_dist;
-        }
-
-        let diff_x = edge.p1.x - point.x;
-        let diff_y = edge.p1.y - point.y;
-
-        let t = (diff_x * edge.dy - diff_y * edge.dx) / denom;
-        let s = (diff_x * dy - diff_y * dx) / denom;
-
-        if t > 1e-9 && s >= 0.0 && s <= 1.0 {
-            min_dist.min(t)
-        } else {
-            min_dist
-        }
-    })
-}
-
 // Calculate log-likelihood of measurements given position
 #[inline]
 fn measurement_log_likelihood(
@@ -257,16 +256,16 @@ fn measurement_log_likelihood(
     let k = measurements.len();
     let angle_step = 2.0 * PI / k as f64;
     let expected: Vec<f64> = (0..k)
-        .map(|i| ray_cast(polygon, pos, i as f64 * angle_step))
+        .map(|i| polygon.ray_cast_for(pos, i as f64 * angle_step))
         .collect();
     let inv_2var = 0.5 / sl.powi(2);
 
     measurements
         .iter()
         .zip(expected.iter())
-        .filter_map(|(m, e)| {
-            if *e < f64::MAX / 2.0 {
-                Some(-(m - e).powi(2) * inv_2var)
+        .filter_map(|(measured, expected)| {
+            if *expected < f64::MAX / 2.0 {
+                Some(-(measured - expected).powi(2) * inv_2var)
             } else {
                 None
             }
@@ -274,25 +273,21 @@ fn measurement_log_likelihood(
         .sum()
 }
 
-// Check if resampling is needed based on effective sample size
-#[inline]
-fn needs_resampling(weights: &[f64], threshold: f64) -> bool {
-    let weight_sum_sq: f64 = weights.iter().map(|w| w.powi(2)).sum();
-    let effective_sample_size =
-        if weight_sum_sq > 1e-300 { 1.0 / weight_sum_sq } else { 0.0 };
-    effective_sample_size < threshold * weights.len() as f64
-}
-
 #[inline]
 fn resample(
     weights: &[f64],
-    resample_threshold: f64,
-    particles: &Vec<Coord2D>,
-    num_particles: usize,
+    particles: &[Coord2D],
     rng: &mut Rng,
+    num_particles: usize,
+    resample_threshold: f64,
 ) -> Option<Vec<Coord2D>> {
-    // Only resample when effective sample size drops below threshold
-    if !needs_resampling(&weights, resample_threshold) {
+    let weight_sum_sq: f64 = weights.iter().map(|w| w.powi(2)).sum();
+    let effective_sample_size =
+        if weight_sum_sq > f64::EPSILON { 1.0 / weight_sum_sq } else { 0.0 };
+    let needs_resampling =
+        effective_sample_size < resample_threshold * num_particles as f64;
+
+    if !needs_resampling {
         return None;
     }
 
@@ -317,7 +312,7 @@ fn resample(
 
 fn calc_weights(
     polygon: &Polygon,
-    particles: &Vec<Coord2D>,
+    particles: &[Coord2D],
     measurements: &[f64],
     sl: f64,
 ) -> Vec<f64> {
@@ -328,22 +323,20 @@ fn calc_weights(
         })
         .collect();
 
-    let max_log_weight = log_weights
-        .iter()
-        .cloned()
-        .fold(f64::NEG_INFINITY, f64::max);
-
+    let max_log_weight =
+        log_weights.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+ 
     let weights: Vec<f64> = log_weights
         .iter()
-        .map(|lw| (*lw - max_log_weight).exp())
+        .map(|log_weight| (*log_weight - max_log_weight).exp())
         .collect();
     let weight_sum: f64 = weights.iter().sum();
 
     weights
         .iter()
-        .map(|w| {
-            if weight_sum > 1e-300 {
-                *w / weight_sum
+        .map(|weight| {
+            if weight_sum > f64::EPSILON {
+                *weight / weight_sum
             } else {
                 1.0 / particles.len() as f64
             }
@@ -359,16 +352,15 @@ fn run_particle_filter(
     sx: f64,
     sy: f64,
     num_particles: usize,
-    random_seed: u64,
     resample_threshold: f64,
 ) -> Coord2D {
-    let mut rng = Rng::new(random_seed);
-    let mut particles: Vec<Coord2D> = if let Some(start_pos) = start_position {
+    let mut rng = Rng::new(RANDOM_SEED);
+    let mut particles: Vec<Coord2D> = if let Some(particle) = start_position {
         (0..num_particles)
             .map(|_| {
                 Coord2D::new(
-                    rng.gen_normal(start_pos.x, sx),
-                    rng.gen_normal(start_pos.y, sy),
+                    rng.gen_normal(particle.x, sx),
+                    rng.gen_normal(particle.y, sy),
                 )
             })
             .collect()
@@ -385,20 +377,20 @@ fn run_particle_filter(
 
         particles = match resample(
             &weights,
-            resample_threshold,
             &particles,
-            num_particles,
             &mut rng,
+            num_particles,
+            resample_threshold,
         ) {
             Some(new_particles) => new_particles,
             None => particles,
         };
 
         // Apply movement with noise
-        if let Some(mov) = &movement.robot_movement {
+        if let Some(Coord2D { x, y }) = &movement.robot_movement {
             for p in &mut particles {
-                p.x += mov.x + rng.gen_normal(0.0, sx);
-                p.y += mov.y + rng.gen_normal(0.0, sy);
+                p.x += x + rng.gen_normal(0.0, sx);
+                p.y += y + rng.gen_normal(0.0, sy);
             }
         }
     }
@@ -435,15 +427,13 @@ fn main() {
         None
     };
 
-    let mut movements: Vec<Movement> = (0..movements_count)
-        .map(|_| Movement::read_from_input(&mut scanner, k, true))
+    let movements: Vec<Movement> = (0..=movements_count)
+        .map(|i| {
+            Movement::read_from_input(&mut scanner, k, i < movements_count)
+        })
         .collect();
-    let last_measurement = Movement::read_from_input(&mut scanner, k, false);
-    movements.push(last_measurement);
 
-    // Concat last measurement to movements
-
-    let final_position = run_particle_filter(
+    let Coord2D { x, y } = run_particle_filter(
         &polygon,
         &movements,
         start_position,
@@ -451,9 +441,7 @@ fn main() {
         sx,
         sy,
         NUM_PARTICLES,
-        RANDOM_SEED,
         RESAMPLE_THRESHOLD,
     );
-
-    println!("{} {}", final_position.x, final_position.y);
+    println!("{} {}", x, y);
 }
