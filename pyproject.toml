@@ -11,15 +11,19 @@ dependencies = [
     "pandas>=2.3.2",
     "pip>=25.3",
     "seaborn>=0.13.2",
+    "pyarrow>=23.0.1",
     "streamlit>=1.51.0",
+    "pyzmq>=27.1.0",
+    "notebook>=7.5.4",
 ]
-requires-python = ">=3.12"
+requires-python = "==3.13.*"
 
 [tool.pyright]
 venvPath = "."
 venv = ".venv"
 include = ["**.py"]
 exclude = [
+    "**/.*",
     "**/site-packages/**",
     "**/.venv/**",
     "**/node_modules/**",

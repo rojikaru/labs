@@ -208,3 +208,10 @@ __marimo__/
 
 # MacOS
 .DS_Store
+
+# Trained model files
+*.h5
+*.hdf5
+*.ckpt
+*.pt
+*.pth
