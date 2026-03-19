@@ -1,0 +1,621 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Definitions_IncidentResponse" targetNamespace="http://trafix.company.inc/bpmn" exporter="bpmn-js (https://demo.bpmn.io)" exporterVersion="18.13.1">
+  <message id="msg_incident_detected" name="IncidentDetected" />
+  <message id="msg_escalation_notice" name="EscalationNotice" />
+  <message id="msg_incident_closed" name="IncidentClosed" />
+  <message id="msg_field_command" name="FieldDeviceCommand" />
+  <message id="msg_field_ack" name="FieldDeviceAcknowledgement" />
+  <collaboration id="Collab_IncidentResponse">
+    <participant id="Pool_System" name="Traffic Management Service" processRef="Proc_System" />
+    <participant id="Pool_Regular" name="Dispatcher System Portal" processRef="Proc_Regular" />
+    <participant id="Pool_Senior" name="Senior Operator System" processRef="Proc_Senior" />
+    <participant id="Pool_Field" name="Field Devices (Traffic Controllers)" processRef="Proc_Field" />
+    <messageFlow id="mf_detect_to_dispatcher" sourceRef="Task_SystemDetect" targetRef="StartEvent_Dispatcher" />
+    <messageFlow id="mf_dispatcher_cmd" name="Device command" sourceRef="Task_SendCommand" targetRef="StartEvent_Field" />
+    <messageFlow id="mf_field_ack" name="Command ACK (≤1 s)" sourceRef="Activity_1cp97b5" targetRef="BndEvt_CmdAck" />
+    <messageFlow id="mf_escalate" name="Escalation Notice" sourceRef="Task_EscalateToSenior" targetRef="StartEvent_Senior" />
+  </collaboration>
+  <process id="Proc_System" name="System" isExecutable="false">
+    <startEvent id="Start_System" name="Sensor data&#10;received">
+      <outgoing>sf_sys_1</outgoing>
+    </startEvent>
+    <task id="Task_Collect" name="Collect &#38; analyse&#10;traffic data">
+      <incoming>sf_sys_1</incoming>
+      <outgoing>sf_sys_2</outgoing>
+    </task>
+    <exclusiveGateway id="GW_Anomaly" name="Anomaly&#10;detected?">
+      <incoming>sf_sys_2</incoming>
+      <outgoing>sf_sys_yes</outgoing>
+      <outgoing>sf_sys_no</outgoing>
+    </exclusiveGateway>
+    <task id="Task_ContinueMonitor" name="Continue&#10;monitoring loop">
+      <incoming>sf_sys_no</incoming>
+      <outgoing>sf_sys_loop</outgoing>
+    </task>
+    <task id="Task_Classify" name="Classify incident&#10;priority P1/P2/P3">
+      <incoming>sf_sys_yes</incoming>
+      <outgoing>sf_sys_3</outgoing>
+    </task>
+    <sendTask id="Task_SystemDetect" name="Push alert to&#10;dispatcher portal">
+      <incoming>sf_sys_3</incoming>
+    </sendTask>
+    <sequenceFlow id="sf_sys_1" sourceRef="Start_System" targetRef="Task_Collect" />
+    <sequenceFlow id="sf_sys_2" sourceRef="Task_Collect" targetRef="GW_Anomaly" />
+    <sequenceFlow id="sf_sys_yes" name="Yes" sourceRef="GW_Anomaly" targetRef="Task_Classify" />
+    <sequenceFlow id="sf_sys_no" name="No" sourceRef="GW_Anomaly" targetRef="Task_ContinueMonitor" />
+    <sequenceFlow id="sf_sys_loop" sourceRef="Task_ContinueMonitor" targetRef="End_System" />
+    <sequenceFlow id="sf_sys_3" sourceRef="Task_Classify" targetRef="Task_SystemDetect" />
+    <sequenceFlow id="sf_sys_4" sourceRef="Event_1l7tdwv" targetRef="Gateway_05cp65l" />
+    <exclusiveGateway id="Gateway_05cp65l" name="Input received?">
+      <incoming>sf_sys_4</incoming>
+      <outgoing>Flow_1tjkews</outgoing>
+      <outgoing>Flow_0d01jap</outgoing>
+    </exclusiveGateway>
+    <sequenceFlow id="Flow_1tjkews" name="Yes" sourceRef="Gateway_05cp65l" targetRef="End_System" />
+    <endEvent id="End_System" name="Monitoring&#10;continues">
+      <incoming>sf_sys_loop</incoming>
+      <incoming>Flow_1tjkews</incoming>
+      <incoming>Flow_027kniv</incoming>
+    </endEvent>
+    <startEvent id="Event_1l7tdwv" name="Initialize 60s&#10;inactivity timer">
+      <outgoing>sf_sys_4</outgoing>
+      <timerEventDefinition id="TimerEventDefinition_1vb9l1z" />
+    </startEvent>
+    <sequenceFlow id="Flow_0d01jap" sourceRef="Gateway_05cp65l" targetRef="Task_EscalateToSenior" />
+    <sendTask id="Task_EscalateToSenior" name="Trigger automated&#10;senior escalation">
+      <incoming>Flow_0d01jap</incoming>
+      <outgoing>Flow_027kniv</outgoing>
+    </sendTask>
+    <sequenceFlow id="Flow_027kniv" sourceRef="Task_EscalateToSenior" targetRef="End_System" />
+  </process>
+  <process id="Proc_Regular" name="Dispatcher System Portal" isExecutable="false">
+    <inclusiveGateway id="GW_Split_Parallel">
+      <incoming>sf_d2</incoming>
+      <outgoing>sf_d_cam</outgoing>
+      <outgoing>sf_d_cmd</outgoing>
+    </inclusiveGateway>
+    <task id="Task_ReviewCamera" name="Stream requested&#10;live feed">
+      <incoming>sf_d_cam</incoming>
+      <outgoing>sf_d_cam_done</outgoing>
+    </task>
+    <sendTask id="Task_SendCommand" name="Dispatch hardware&#10;command (signal/sign)">
+      <incoming>sf_d_cmd</incoming>
+      <outgoing>sf_d_wait_ack</outgoing>
+    </sendTask>
+    <startEvent id="StartEvent_Dispatcher" name="Incident alert&#10;received">
+      <outgoing>sf_d1</outgoing>
+      <messageEventDefinition messageRef="msg_incident_detected" />
+    </startEvent>
+    <task id="Task_AssessSituation" name="Render map &#38;&#10;camera streams">
+      <incoming>sf_d1</incoming>
+      <incoming>Flow_035f5kv</incoming>
+      <outgoing>sf_d2</outgoing>
+    </task>
+    <endEvent id="End_IncidentClosed" name="Incident closed&#10;&#38; logged">
+      <incoming>sf_d_closed</incoming>
+      <messageEventDefinition messageRef="msg_incident_closed" />
+    </endEvent>
+    <inclusiveGateway id="GW_Join_Parallel">
+      <incoming>sf_d_cam_done</incoming>
+      <incoming>sf_d_ack</incoming>
+      <incoming>sf_d_wait_ack</incoming>
+      <outgoing>Flow_16o0oh0</outgoing>
+    </inclusiveGateway>
+    <exclusiveGateway id="GW_Resolved" name="Resolution&#10;confirmed?">
+      <incoming>Flow_0jk3wat</incoming>
+      <outgoing>sf_d_yes_resolved</outgoing>
+      <outgoing>Flow_035f5kv</outgoing>
+    </exclusiveGateway>
+    <task id="Activity_00hzlsw" name="Update admin panel status">
+      <incoming>Flow_16o0oh0</incoming>
+      <outgoing>Flow_0jk3wat</outgoing>
+    </task>
+    <transaction id="Task_CloseIncident" name="Execute closure&#10;transaction">
+      <incoming>sf_d_yes_resolved</incoming>
+      <outgoing>sf_d_closed</outgoing>
+      <startEvent id="Start_TxClose" name="Start close">
+        <outgoing>sf_tx1</outgoing>
+      </startEvent>
+      <task id="Task_VerifyClose" name="Prompt visual&#10;verification">
+        <incoming>sf_tx1</incoming>
+        <outgoing>sf_tx2</outgoing>
+      </task>
+      <task id="Task_WriteJournal" name="Commit immutable log&#10;(time, actions, actors)">
+        <incoming>sf_tx2</incoming>
+        <outgoing>sf_tx3</outgoing>
+      </task>
+      <endEvent id="End_TxClose" name="Committed">
+        <incoming>sf_tx3</incoming>
+      </endEvent>
+      <sequenceFlow id="sf_tx1" sourceRef="Start_TxClose" targetRef="Task_VerifyClose" />
+      <sequenceFlow id="sf_tx2" sourceRef="Task_VerifyClose" targetRef="Task_WriteJournal" />
+      <sequenceFlow id="sf_tx3" sourceRef="Task_WriteJournal" targetRef="End_TxClose" />
+    </transaction>
+    <boundaryEvent id="BndEvt_CmdAck" name="ACK&#10;received (≤1s)" attachedToRef="Task_SendCommand">
+      <outgoing>sf_d_ack</outgoing>
+      <messageEventDefinition messageRef="msg_field_ack" />
+    </boundaryEvent>
+    <sequenceFlow id="sf_d2" sourceRef="Task_AssessSituation" targetRef="GW_Split_Parallel" />
+    <sequenceFlow id="sf_d_cam" sourceRef="GW_Split_Parallel" targetRef="Task_ReviewCamera" />
+    <sequenceFlow id="sf_d_cmd" sourceRef="GW_Split_Parallel" targetRef="Task_SendCommand" />
+    <sequenceFlow id="sf_d_cam_done" sourceRef="Task_ReviewCamera" targetRef="GW_Join_Parallel" />
+    <sequenceFlow id="sf_d_wait_ack" sourceRef="Task_SendCommand" targetRef="GW_Join_Parallel" />
+    <sequenceFlow id="sf_d1" sourceRef="StartEvent_Dispatcher" targetRef="Task_AssessSituation" />
+    <sequenceFlow id="Flow_035f5kv" name="No" sourceRef="GW_Resolved" targetRef="Task_AssessSituation" />
+    <sequenceFlow id="sf_d_closed" sourceRef="Task_CloseIncident" targetRef="End_IncidentClosed" />
+    <sequenceFlow id="sf_d_ack" sourceRef="BndEvt_CmdAck" targetRef="GW_Join_Parallel" />
+    <sequenceFlow id="Flow_16o0oh0" sourceRef="GW_Join_Parallel" targetRef="Activity_00hzlsw" />
+    <sequenceFlow id="Flow_0jk3wat" sourceRef="Activity_00hzlsw" targetRef="GW_Resolved" />
+    <sequenceFlow id="sf_d_yes_resolved" name="Yes" sourceRef="GW_Resolved" targetRef="Task_CloseIncident" />
+  </process>
+  <process id="Proc_Senior" name="Senior Operator System" isExecutable="false">
+    <startEvent id="StartEvent_Senior" name="Escalation&#10;notice received">
+      <outgoing>Flow_0yvfg58</outgoing>
+      <messageEventDefinition id="MessageEventDefinition_0yjfho7" messageRef="msg_escalation_notice" />
+    </startEvent>
+    <subProcess id="SubProc_SeniorHandling" name="Senior operator&#10;incident handling">
+      <incoming>Flow_0yvfg58</incoming>
+      <outgoing>Flow_0pwt2nx</outgoing>
+      <startEvent id="Start_Sub" name="Start">
+        <outgoing>sf_sub1</outgoing>
+      </startEvent>
+      <task id="Task_Senior_Assess" name="Render full city&#10;dashboard">
+        <incoming>sf_sub1</incoming>
+        <outgoing>sf_sub2</outgoing>
+      </task>
+      <callActivity id="CallAct_ManualControl" name="Provide manual&#10;override API" calledElement="Proc_ManualControl">
+        <incoming>sf_sub2</incoming>
+        <outgoing>sf_sub3</outgoing>
+      </callActivity>
+      <task id="Task_Senior_Confirm" name="Process resolution&#10;override">
+        <incoming>sf_sub3</incoming>
+        <outgoing>Flow_0ccsv1t</outgoing>
+      </task>
+      <sequenceFlow id="sf_sub1" sourceRef="Start_Sub" targetRef="Task_Senior_Assess" />
+      <sequenceFlow id="sf_sub2" sourceRef="Task_Senior_Assess" targetRef="CallAct_ManualControl" />
+      <sequenceFlow id="sf_sub3" sourceRef="CallAct_ManualControl" targetRef="Task_Senior_Confirm" />
+      <sendTask id="Activity_000ck8r" name="Broadcast resolution&#10;state">
+        <incoming>Flow_0ccsv1t</incoming>
+      </sendTask>
+      <sequenceFlow id="Flow_0ccsv1t" sourceRef="Task_Senior_Confirm" targetRef="Activity_000ck8r" />
+    </subProcess>
+    <sequenceFlow id="Flow_0yvfg58" sourceRef="StartEvent_Senior" targetRef="SubProc_SeniorHandling" />
+    <endEvent id="Event_04xxu7j" name="Incident closed&#10;&#38; logged">
+      <incoming>Flow_0pwt2nx</incoming>
+      <messageEventDefinition id="MessageEventDefinition_0b2p8w6" messageRef="msg_incident_closed" />
+    </endEvent>
+    <sequenceFlow id="Flow_0pwt2nx" sourceRef="SubProc_SeniorHandling" targetRef="Event_04xxu7j" />
+  </process>
+  <process id="Proc_Field" name="Field Devices" isExecutable="false">
+    <startEvent id="StartEvent_Field" name="Command&#10;received">
+      <outgoing>sf_f1</outgoing>
+      <messageEventDefinition messageRef="msg_field_command" />
+    </startEvent>
+    <task id="Task_FieldValidate" name="Validate command&#10;(auth check)">
+      <incoming>sf_f1</incoming>
+      <outgoing>sf_f2</outgoing>
+    </task>
+    <exclusiveGateway id="GW_FieldAuth" name="Authorised?&#10;(region, role)">
+      <incoming>sf_f2</incoming>
+      <outgoing>sf_f_ok</outgoing>
+      <outgoing>sf_f_deny</outgoing>
+    </exclusiveGateway>
+    <task id="Task_FieldExecute" name="Execute signal change">
+      <incoming>sf_f_ok</incoming>
+      <outgoing>Flow_1cavqde</outgoing>
+    </task>
+    <endEvent id="End_Field_Denied" name="Command rejected">
+      <incoming>sf_f_deny</incoming>
+    </endEvent>
+    <sequenceFlow id="sf_f1" sourceRef="StartEvent_Field" targetRef="Task_FieldValidate" />
+    <sequenceFlow id="sf_f2" sourceRef="Task_FieldValidate" targetRef="GW_FieldAuth" />
+    <sequenceFlow id="sf_f_ok" name="Yes" sourceRef="GW_FieldAuth" targetRef="Task_FieldExecute" />
+    <sequenceFlow id="sf_f_deny" name="No" sourceRef="GW_FieldAuth" targetRef="End_Field_Denied" />
+    <endEvent id="End_Field_Done" name="Signal changed">
+      <incoming>Flow_0wzhizr</incoming>
+    </endEvent>
+    <sendTask id="Activity_1cp97b5" name="Send ACK">
+      <incoming>Flow_1cavqde</incoming>
+      <outgoing>Flow_0wzhizr</outgoing>
+    </sendTask>
+    <sequenceFlow id="Flow_1cavqde" sourceRef="Task_FieldExecute" targetRef="Activity_1cp97b5" />
+    <sequenceFlow id="Flow_0wzhizr" sourceRef="Activity_1cp97b5" targetRef="End_Field_Done" />
+  </process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Collab_IncidentResponse">
+      <bpmndi:BPMNShape id="Shape_Pool_System" bpmnElement="Pool_System" isHorizontal="true">
+        <dc:Bounds x="160" y="80" width="1620" height="190" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Start_System" bpmnElement="Start_System">
+        <dc:Bounds x="212" y="162" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="201" y="205" width="60" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_Collect" bpmnElement="Task_Collect">
+        <dc:Bounds x="300" y="140" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_GW_Anomaly" bpmnElement="GW_Anomaly" isMarkerVisible="true">
+        <dc:Bounds x="490" y="160" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="492" y="217" width="49" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_ContinueMonitor" bpmnElement="Task_ContinueMonitor">
+        <dc:Bounds x="590" y="100" width="140" height="60" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_Classify" bpmnElement="Task_Classify">
+        <dc:Bounds x="590" y="170" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_SystemDetect" bpmnElement="Task_SystemDetect">
+        <dc:Bounds x="780" y="170" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="BPMNShape_10juiht" bpmnElement="Gateway_05cp65l" isMarkerVisible="true">
+        <dc:Bounds x="1195" y="185" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1184" y="242" width="76" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_End_System" bpmnElement="End_System">
+        <dc:Bounds x="1202" y="112" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1194" y="84.5" width="52" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_1l7tdwv_di" bpmnElement="Event_1l7tdwv">
+        <dc:Bounds x="915" y="192" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="931" y="235" width="70" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_0jzddcb_di" bpmnElement="Task_EscalateToSenior">
+        <dc:Bounds x="1350" y="170" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Edge_sf_sys_1" bpmnElement="sf_sys_1">
+        <di:waypoint x="248" y="180" />
+        <di:waypoint x="300" y="180" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_sf_sys_2" bpmnElement="sf_sys_2">
+        <di:waypoint x="440" y="185" />
+        <di:waypoint x="490" y="185" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_sf_sys_yes" bpmnElement="sf_sys_yes">
+        <di:waypoint x="540" y="185" />
+        <di:waypoint x="565" y="185" />
+        <di:waypoint x="565" y="215" />
+        <di:waypoint x="590" y="215" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="569" y="197" width="18" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_sf_sys_no" bpmnElement="sf_sys_no">
+        <di:waypoint x="515" y="160" />
+        <di:waypoint x="515" y="130" />
+        <di:waypoint x="590" y="130" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="524" y="136" width="15" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_sf_sys_loop" bpmnElement="sf_sys_loop">
+        <di:waypoint x="730" y="130" />
+        <di:waypoint x="1202" y="130" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_sf_sys_3" bpmnElement="sf_sys_3">
+        <di:waypoint x="730" y="210" />
+        <di:waypoint x="780" y="210" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_sf_sys_4" bpmnElement="sf_sys_4">
+        <di:waypoint x="951" y="210" />
+        <di:waypoint x="1195" y="210" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_1tjkews_di" bpmnElement="Flow_1tjkews">
+        <di:waypoint x="1220" y="185" />
+        <di:waypoint x="1220" y="148" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1226" y="164" width="18" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0d01jap_di" bpmnElement="Flow_0d01jap">
+        <di:waypoint x="1245" y="210" />
+        <di:waypoint x="1350" y="210" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_027kniv_di" bpmnElement="Flow_027kniv">
+        <di:waypoint x="1400" y="170" />
+        <di:waypoint x="1400" y="130" />
+        <di:waypoint x="1238" y="130" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNShape id="Shape_Pool_Regular" bpmnElement="Pool_Regular" isHorizontal="true">
+        <dc:Bounds x="160" y="280" width="1620" height="320" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_GW_Split_Parallel" bpmnElement="GW_Split_Parallel">
+        <dc:Bounds x="530" y="415" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="589.5" y="366" width="37" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_ReviewCamera" bpmnElement="Task_ReviewCamera">
+        <dc:Bounds x="640" y="310" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_SendCommand" bpmnElement="Task_SendCommand">
+        <dc:Bounds x="640" y="430" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_StartEvent_Dispatcher" bpmnElement="StartEvent_Dispatcher">
+        <dc:Bounds x="232" y="362" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="219" y="405" width="64" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_AssessSituation" bpmnElement="Task_AssessSituation">
+        <dc:Bounds x="320" y="340" width="150" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_End_IncidentClosed" bpmnElement="End_IncidentClosed">
+        <dc:Bounds x="1392" y="422" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1373" y="476" width="74" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_GW_Join_Parallel" bpmnElement="GW_Join_Parallel">
+        <dc:Bounds x="835" y="415" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="840" y="412" width="72" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_GW_Resolved" bpmnElement="GW_Resolved" isMarkerVisible="true">
+        <dc:Bounds x="1037" y="415" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1037" y="475" width="49" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_00hzlsw_di" bpmnElement="Activity_00hzlsw">
+        <dc:Bounds x="909" y="400" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_CloseIncident" bpmnElement="Task_CloseIncident">
+        <dc:Bounds x="1125" y="400" width="170" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_BndEvt_CmdAck" bpmnElement="BndEvt_CmdAck">
+        <dc:Bounds x="692" y="492" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="805" y="526" width="70" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Edge_sf_d2" bpmnElement="sf_d2">
+        <di:waypoint x="470" y="380" />
+        <di:waypoint x="500" y="380" />
+        <di:waypoint x="500" y="440" />
+        <di:waypoint x="530" y="440" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_sf_d_cam" bpmnElement="sf_d_cam">
+        <di:waypoint x="555" y="415" />
+        <di:waypoint x="555" y="350" />
+        <di:waypoint x="640" y="350" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_sf_d_cmd" bpmnElement="sf_d_cmd">
+        <di:waypoint x="555" y="465" />
+        <di:waypoint x="555" y="470" />
+        <di:waypoint x="640" y="470" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_sf_d_cam_done" bpmnElement="sf_d_cam_done">
+        <di:waypoint x="790" y="350" />
+        <di:waypoint x="860" y="350" />
+        <di:waypoint x="860" y="415" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_sf_d_wait_ack" bpmnElement="sf_d_wait_ack">
+        <di:waypoint x="790" y="470" />
+        <di:waypoint x="813" y="470" />
+        <di:waypoint x="813" y="440" />
+        <di:waypoint x="835" y="440" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_sf_d1" bpmnElement="sf_d1">
+        <di:waypoint x="268" y="380" />
+        <di:waypoint x="320" y="380" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_035f5kv_di" bpmnElement="Flow_035f5kv">
+        <di:waypoint x="1062" y="415" />
+        <di:waypoint x="1062" y="290" />
+        <di:waypoint x="395" y="290" />
+        <di:waypoint x="395" y="340" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1069" y="393" width="15" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_sf_d_closed" bpmnElement="sf_d_closed">
+        <di:waypoint x="1295" y="440" />
+        <di:waypoint x="1392" y="440" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_sf_d_ack" bpmnElement="sf_d_ack">
+        <di:waypoint x="728" y="510" />
+        <di:waypoint x="810" y="510" />
+        <di:waypoint x="860" y="465" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_16o0oh0_di" bpmnElement="Flow_16o0oh0">
+        <di:waypoint x="885" y="440" />
+        <di:waypoint x="909" y="440" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0jk3wat_di" bpmnElement="Flow_0jk3wat">
+        <di:waypoint x="1009" y="440" />
+        <di:waypoint x="1037" y="440" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_sf_d_yes_resolved" bpmnElement="sf_d_yes_resolved">
+        <di:waypoint x="1087" y="440" />
+        <di:waypoint x="1125" y="440" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1097" y="422" width="18" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNShape id="Shape_Pool_Field" bpmnElement="Pool_Field" isHorizontal="true">
+        <dc:Bounds x="160" y="870" width="1620" height="270" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_StartEvent_Field" bpmnElement="StartEvent_Field">
+        <dc:Bounds x="232" y="942" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="225" y="985" width="51" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_FieldValidate" bpmnElement="Task_FieldValidate">
+        <dc:Bounds x="320" y="920" width="150" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_GW_FieldAuth" bpmnElement="GW_FieldAuth" isMarkerVisible="true">
+        <dc:Bounds x="530" y="935" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="524" y="907" width="63" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_FieldExecute" bpmnElement="Task_FieldExecute">
+        <dc:Bounds x="640" y="920" width="160" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_End_Field_Denied" bpmnElement="End_Field_Denied">
+        <dc:Bounds x="642" y="1030" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="634" y="1073" width="54" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_End_Field_Done" bpmnElement="End_Field_Done">
+        <dc:Bounds x="1072" y="942" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1053" y="985" width="76" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_1cp97b5_di" bpmnElement="Activity_1cp97b5">
+        <dc:Bounds x="900" y="920" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Edge_sf_f1" bpmnElement="sf_f1">
+        <di:waypoint x="268" y="960" />
+        <di:waypoint x="320" y="960" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_sf_f2" bpmnElement="sf_f2">
+        <di:waypoint x="470" y="960" />
+        <di:waypoint x="530" y="960" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_sf_f_ok" bpmnElement="sf_f_ok">
+        <di:waypoint x="580" y="960" />
+        <di:waypoint x="640" y="960" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="598" y="942" width="18" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_sf_f_deny" bpmnElement="sf_f_deny">
+        <di:waypoint x="555" y="985" />
+        <di:waypoint x="555" y="1048" />
+        <di:waypoint x="642" y="1048" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="562" y="1010" width="15" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_1cavqde_di" bpmnElement="Flow_1cavqde">
+        <di:waypoint x="800" y="960" />
+        <di:waypoint x="900" y="960" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0wzhizr_di" bpmnElement="Flow_0wzhizr">
+        <di:waypoint x="1000" y="960" />
+        <di:waypoint x="1072" y="960" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNShape id="Shape_Pool_Senior" bpmnElement="Pool_Senior" isHorizontal="true">
+        <dc:Bounds x="160" y="608" width="1620" height="240" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_0c5umsu_di" bpmnElement="StartEvent_Senior">
+        <dc:Bounds x="232" y="700" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="214" y="743" width="74" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="BPMNShape_1ghh51m" bpmnElement="Event_04xxu7j">
+        <dc:Bounds x="1232" y="730" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1213" y="784" width="74" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_SubProc_SeniorHandling" bpmnElement="SubProc_SeniorHandling" isExpanded="true">
+        <dc:Bounds x="320" y="668" width="790" height="160" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Start_Sub" bpmnElement="Start_Sub">
+        <dc:Bounds x="350" y="728" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="356" y="764" width="24" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_Senior_Assess" bpmnElement="Task_Senior_Assess">
+        <dc:Bounds x="430" y="708" width="140" height="76" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_CallAct_ManualControl" bpmnElement="CallAct_ManualControl">
+        <dc:Bounds x="610" y="708" width="150" height="76" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Task_Senior_Confirm" bpmnElement="Task_Senior_Confirm">
+        <dc:Bounds x="800" y="708" width="140" height="76" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_1rmyj5g_di" bpmnElement="Activity_000ck8r">
+        <dc:Bounds x="970" y="706" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Edge_sf_sub1" bpmnElement="sf_sub1">
+        <di:waypoint x="386" y="746" />
+        <di:waypoint x="430" y="746" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_sf_sub2" bpmnElement="sf_sub2">
+        <di:waypoint x="570" y="746" />
+        <di:waypoint x="610" y="746" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_sf_sub3" bpmnElement="sf_sub3">
+        <di:waypoint x="760" y="746" />
+        <di:waypoint x="800" y="746" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0ccsv1t_di" bpmnElement="Flow_0ccsv1t">
+        <di:waypoint x="940" y="746" />
+        <di:waypoint x="970" y="746" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0yvfg58_di" bpmnElement="Flow_0yvfg58">
+        <di:waypoint x="268" y="718" />
+        <di:waypoint x="320" y="718" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0pwt2nx_di" bpmnElement="Flow_0pwt2nx">
+        <di:waypoint x="1110" y="748" />
+        <di:waypoint x="1232" y="748" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_mf_detect_to_dispatcher" bpmnElement="mf_detect_to_dispatcher">
+        <di:waypoint x="855" y="250" />
+        <di:waypoint x="855" y="260" />
+        <di:waypoint x="250" y="260" />
+        <di:waypoint x="250" y="362" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="208" y="266" width="64" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_mf_dispatcher_cmd" bpmnElement="mf_dispatcher_cmd">
+        <di:waypoint x="715" y="510" />
+        <di:waypoint x="715" y="560" />
+        <di:waypoint x="120" y="560" />
+        <di:waypoint x="120" y="960" />
+        <di:waypoint x="230" y="960" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="572" y="543" width="85" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_mf_field_ack" bpmnElement="mf_field_ack">
+        <di:waypoint x="920" y="920" />
+        <di:waypoint x="810" y="560" />
+        <di:waypoint x="726" y="518" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="822" y="885" width="80" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_mf_escalate" bpmnElement="mf_escalate">
+        <di:waypoint x="1450" y="210" />
+        <di:waypoint x="1890" y="210" />
+        <di:waypoint x="1890" y="641" />
+        <di:waypoint x="250" y="641" />
+        <di:waypoint x="250" y="700" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1487" y="193" width="85" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+  <bpmndi:BPMNDiagram>
+    <bpmndi:BPMNPlane bpmnElement="Task_CloseIncident" />
+  </bpmndi:BPMNDiagram>
+</definitions>
