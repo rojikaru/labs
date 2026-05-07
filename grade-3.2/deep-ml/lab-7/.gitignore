@@ -1,0 +1,7 @@
+output/
+saved_models/
+*.wav
+*.pth
+data/
+.ipynb_checkpoints/
+__pycache__/
