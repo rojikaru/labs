@@ -1,0 +1,57 @@
+Table dim_location {
+  id bigint [pk, increment]
+  name text [not null]
+}
+
+Table dim_charger {
+  id bigint [pk, increment]
+  location_id bigint [not null, ref: > dim_location.id]
+  type text [not null]
+}
+
+Table dim_user {
+  id bigint [pk, increment]
+  car_model text [not null]
+  membership_type text [not null]
+}
+
+Table dim_date {
+  id bigint [pk, increment]
+  iso varchar [not null]
+  
+  day integer [not null]
+  month integer [not null]
+  year integer [not null]
+  
+  day_of_week enum('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday') [not null]
+  week integer [not null]
+}
+
+Table dim_time {
+  id bigint [pk, increment]
+  date_id bigint [not null, ref: > dim_date.id]
+  time_of_day enum('Morning', 'Afternoon',  'Evening', 'Night') [not null]
+  hours integer [not null]
+  minutes integer [not null]
+}
+
+Table facts_charges {
+  id bigint [pk, increment]
+  charger_id bigint [not null, ref: > dim_charger.id]
+  user_id bigint [not null, ref: > dim_user.id]
+  
+  start_time bigint [not null, ref: > dim_time.id]
+  end_time bigint [not null, ref: > dim_time.id]
+  duration_hours float [not null]
+  
+  energy_consumed_kwh float [not null]
+  charging_rate_kwh float [not null]
+  charging_cost_kwh float [not null]
+  
+  battery_percentage_start float [not null]
+  battery_percentage_end float [not null]
+
+  vehicle_age_years float [not null]
+  distance_since_last_charge_km float [not null]
+  ambient_temperature_celsius float [not null]
+}
