@@ -27,7 +27,7 @@ impl Scanner {
     }
 }
 
-// Simple xorshift64 RNG
+/// Simple xorshift64 RNG
 struct Rng {
     state: u64,
 }
@@ -46,17 +46,17 @@ impl Rng {
         x
     }
 
-    // Generate uniform random f64 in [0, 1)
+    /// Generate uniform random f64 in [0, 1)
     fn next_f64(&mut self) -> f64 {
         (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
     }
 
-    // Generate uniform random f64 in [low, high)
+    /// Generate uniform random f64 in [low, high)
     fn gen_range(&mut self, low: f64, high: f64) -> f64 {
         low + self.next_f64() * (high - low)
     }
 
-    // Generate normal distribution using Box-Muller transform
+    /// Generate normal distribution using Box-Muller transform
     fn gen_normal(&mut self, mean: f64, std_dev: f64) -> f64 {
         let u1 = self.next_f64().max(f64::EPSILON); // Avoid log(0)
         let u2 = self.next_f64();
@@ -78,7 +78,7 @@ impl Coord2D {
     }
 }
 
-// Precomputed edge data for faster ray casting
+/// Precomputed edge data for faster ray casting
 #[derive(Clone, Copy)]
 struct Edge {
     p1: Coord2D,
@@ -102,9 +102,9 @@ impl BoundingBox {
 
     #[inline(always)]
     fn contains(&self, point: Coord2D) -> bool {
-        point.x >= self.min_x
+        self.min_x <= point.x
             && point.x <= self.max_x
-            && point.y >= self.min_y
+            && self.min_y <= point.y
             && point.y <= self.max_y
     }
 
@@ -125,18 +125,18 @@ impl BoundingBox {
     }
 }
 
-// Cached polygon data for optimized geometric operations
+/// Cached polygon data for optimized geometric operations
 struct Polygon {
-    vertices: Vec<Coord2D>,
-    edges: Vec<Edge>,
+    vertices: Box<[Coord2D]>,
+    edges: Box<[Edge]>,
     bbox: BoundingBox,
 }
 
 impl Polygon {
     #[inline(always)]
-    fn new(vertices: Vec<Coord2D>) -> Self {
+    fn new(vertices: Box<[Coord2D]>) -> Self {
         let n = vertices.len();
-        let edges: Vec<Edge> = (0..n)
+        let edges: Box<[Edge]> = (0..n)
             .map(|i| {
                 let p1 = vertices[i];
                 let p2 = vertices[(i + 1) % n];
@@ -147,7 +147,7 @@ impl Polygon {
         Self { vertices, edges, bbox }
     }
 
-    // Check if point is inside polygon using ray casting (with bbox optimization)
+    /// Check if point is inside polygon using ray casting (with bbox optimization)
     #[inline]
     fn contains_point(&self, point: Coord2D) -> bool {
         // Quick rejection using bounding box
@@ -161,17 +161,20 @@ impl Polygon {
         let mut j = n - 1;
 
         for i in 0..n {
-            let pi = &polygon[i];
-            let pj = &polygon[j];
+            let (pi, pj) = (polygon[i], polygon[j]);
+            let (dx, dy) = (pj.x - pi.x, pj.y - pi.y + f64::EPSILON);
 
-            if ((pi.y > point.y) != (pj.y > point.y))
-                && (point.x
-                    < (pj.x - pi.x) * (point.y - pi.y) / (pj.y - pi.y) + pi.x)
-            {
+            let on_boundary = (pi.y > point.y) != (pj.y > point.y);
+
+            // Check if the point is to the left of the edge
+            let is_left = point.x < dx * (point.y - pi.y) / dy + pi.x;
+
+            if on_boundary && is_left {
                 inside = !inside;
             }
             j = i;
         }
+
         inside
     }
 
@@ -186,7 +189,7 @@ impl Polygon {
         }
     }
 
-    // Calculate distance from point to wall in direction given by angle (using cached edges)
+    /// Calculate distance from point to wall in direction given by angle (using cached edges)
     #[inline]
     fn ray_cast_for(&self, point: Coord2D, angle: f64) -> f64 {
         let (dy, dx) = angle.sin_cos();
@@ -212,13 +215,13 @@ impl Polygon {
 }
 
 struct Movement {
-    lidar_measurements: Vec<f64>,
+    lidar_measurements: Box<[f64]>,
     robot_movement: Option<Coord2D>,
 }
 
 impl Movement {
     fn new(
-        lidar_measurements: Vec<f64>,
+        lidar_measurements: Box<[f64]>,
         robot_movement: Option<Coord2D>,
     ) -> Self {
         Self { lidar_measurements, robot_movement }
@@ -229,7 +232,7 @@ impl Movement {
         num_measurements: usize,
         has_movement_coord: bool,
     ) -> Self {
-        let lidar_measurements: Vec<f64> =
+        let lidar_measurements: Box<[f64]> =
             (0..num_measurements).map(|_| scanner.next()).collect();
 
         if !has_movement_coord {
@@ -241,7 +244,7 @@ impl Movement {
     }
 }
 
-// Calculate log-likelihood of measurements given position
+/// Calculate log-likelihood of measurements given position
 #[inline]
 fn measurement_log_likelihood(
     polygon: &Polygon,
@@ -255,7 +258,7 @@ fn measurement_log_likelihood(
 
     let k = measurements.len();
     let angle_step = 2.0 * PI / k as f64;
-    let expected: Vec<f64> = (0..k)
+    let expected: Box<[f64]> = (0..k)
         .map(|i| polygon.ray_cast_for(pos, i as f64 * angle_step))
         .collect();
     let inv_2var = 0.5 / sl.powi(2);
@@ -280,7 +283,7 @@ fn resample(
     rng: &mut Rng,
     num_particles: usize,
     resample_threshold: f64,
-) -> Option<Vec<Coord2D>> {
+) -> Option<Box<[Coord2D]>> {
     let weight_sum_sq: f64 = weights.iter().map(|w| w.powi(2)).sum();
     let effective_sample_size =
         if weight_sum_sq > f64::EPSILON { 1.0 / weight_sum_sq } else { 0.0 };
@@ -307,7 +310,7 @@ fn resample(
         r += step;
     }
 
-    Some(new_particles)
+    Some(new_particles.into_boxed_slice())
 }
 
 fn calc_weights(
@@ -315,8 +318,8 @@ fn calc_weights(
     particles: &[Coord2D],
     measurements: &[f64],
     sl: f64,
-) -> Vec<f64> {
-    let log_weights: Vec<f64> = particles
+) -> Box<[f64]> {
+    let log_weights: Box<[f64]> = particles
         .iter()
         .map(|point| {
             measurement_log_likelihood(polygon, *point, measurements, sl)
@@ -325,23 +328,18 @@ fn calc_weights(
 
     let max_log_weight =
         log_weights.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
- 
-    let weights: Vec<f64> = log_weights
+
+    let weights: Box<[f64]> = log_weights
         .iter()
         .map(|log_weight| (*log_weight - max_log_weight).exp())
         .collect();
     let weight_sum: f64 = weights.iter().sum();
 
-    weights
-        .iter()
-        .map(|weight| {
-            if weight_sum > f64::EPSILON {
-                *weight / weight_sum
-            } else {
-                1.0 / particles.len() as f64
-            }
-        })
-        .collect()
+    if weight_sum > f64::EPSILON {
+        weights.iter().map(|weight| *weight / weight_sum).collect()
+    } else {
+        vec![1.0 / particles.len() as f64; particles.len()].into_boxed_slice()
+    }
 }
 
 fn run_particle_filter(
@@ -355,7 +353,7 @@ fn run_particle_filter(
     resample_threshold: f64,
 ) -> Coord2D {
     let mut rng = Rng::new(RANDOM_SEED);
-    let mut particles: Vec<Coord2D> = if let Some(particle) = start_position {
+    let mut particles: Box<[Coord2D]> = if let Some(particle) = start_position {
         (0..num_particles)
             .map(|_| {
                 Coord2D::new(
@@ -369,7 +367,7 @@ fn run_particle_filter(
             .map(|_| polygon.random_point_inside(&mut rng))
             .collect()
     };
-    let mut weights: Vec<f64> = vec![];
+    let mut weights: Box<[f64]> = Box::new([]);
 
     for movement in movements {
         weights =
@@ -388,7 +386,7 @@ fn run_particle_filter(
 
         // Apply movement with noise
         if let Some(Coord2D { x, y }) = &movement.robot_movement {
-            for p in &mut particles {
+            for p in particles.iter_mut() {
                 p.x += x + rng.gen_normal(0.0, sx);
                 p.y += y + rng.gen_normal(0.0, sy);
             }
@@ -408,7 +406,7 @@ fn main() {
     let mut scanner = Scanner::new();
     let n: usize = scanner.next();
 
-    let polygon: Vec<Coord2D> = (0..n)
+    let polygon: Box<[Coord2D]> = (0..n)
         .map(|_| Coord2D::new(scanner.next(), scanner.next()))
         .collect();
 
@@ -427,7 +425,7 @@ fn main() {
         None
     };
 
-    let movements: Vec<Movement> = (0..=movements_count)
+    let movements: Box<[Movement]> = (0..=movements_count)
         .map(|i| {
             Movement::read_from_input(&mut scanner, k, i < movements_count)
         })
