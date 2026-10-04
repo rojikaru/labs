@@ -216,3 +216,7 @@ __marimo__/
 *.pt
 *.pth
 *.keras
+
+# Quarto cache
+.quarto/
+quarto-cache/
