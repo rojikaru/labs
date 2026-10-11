@@ -1,0 +1,328 @@
+---
+title: ""
+lang: uk
+format:
+  typst:
+    mainfont: "Times New Roman"
+    fontsize: 14pt
+    margin: { x: 2.5cm, y: 2.5cm }
+  docx: default
+  pdf:
+    pdf-engine: lualatex
+    mainfont: "Times New Roman"
+---
+
+```{=typst}
+// Configure the page.
+#set page(
+  paper: "a4",
+  // The margins depend on the paper size.
+  margin: (x: 2cm, y: 1.5cm),
+  numbering:  (current, total) => if current > 1 { current }, number-align: right, 
+)
+
+// Configure styling
+#set par(
+  leading: 0.8em,
+  spacing: 1em,
+  justify: true,
+)
+#show table: set text(size: 9pt)
+
+#align(top + center)[
+  Міністерство освіти і науки України \
+  Національний університет «Львівська політехніка» \
+  Кафедра систем штучного інтелекту \
+  \
+  #image("logo.png", width: 6cm)
+  \
+  #set par(spacing: 0.4em)
+  #text(size: 24pt, weight: "bold")[Звіт]
+  #set par(spacing: 0.8em)
+
+  *про виконання лабораторної роботи № 1* \
+  _з дисципліни:_ «Обробка зображень методами штучного інтелекту» \
+  _на тему:_ «Попередня обробка зображень»
+]
+
+#align(bottom + right)[
+  Виконав: \
+  студент групи ШІ-42 \
+  Горишевський Олексій Олександрович
+]
+
+#pagebreak()
+```
+
+```{=typst}
+= Installing dependencies
+```
+
+```{python}
+%pip install --quiet numpy matplotlib
+```
+
+```{=typst}
+= Loading & drawing helpers
+```
+
+```{python}
+import matplotlib.pyplot as plt
+from matplotlib.image import imread
+import numpy as np
+from os import path
+import io, urllib.request
+from urllib.parse import urlparse
+
+# https://en.wikipedia.org/wiki/Luma_(video)
+luma_601 = np.array([0.299, 0.587, 0.114])
+
+def downscale(img, max_side=700):
+    k = int(np.ceil(max(img.shape) / max_side))
+    if k == 1:
+        return img
+    H, W = img.shape[0] // k * k, img.shape[1] // k * k
+    return img[:H, :W].reshape(H // k, k, W // k, k).mean(axis=(1, 3)).astype(np.uint8)
+
+def read_any(src: str):
+    if not src.startswith("http"):
+      return imread(path.expanduser(src))
+
+    req = urllib.request.Request(src, headers={"User-Agent": "lab1-student-report/1.0"})
+    data = urllib.request.urlopen(req).read()
+    ext = urlparse(src).path.rsplit(".", 1)[-1].lower()
+    return imread(io.BytesIO(data), format=ext)
+
+def load_gray(img_path: str):
+  img = read_any(img_path).astype(np.float64)
+
+  # PNGs are [0, 1]
+  if img.max() <= 1.0:
+      img *= 255
+
+  # grayscale conversion
+  if img.ndim == 3:
+      img = img[..., :3] @ luma_601
+
+  return downscale(img.astype(np.uint8))
+```
+
+```{=typst}
+= 2D Linear filtering
+```
+
+```{python}
+def filter2d(img, kernel, border="reflect"):
+  kernel = np.asarray(kernel, float)
+  
+  kh, kw = kernel.shape
+  ph, pw = kh // 2, kw // 2
+  
+  # padded.shape = (ph_1 + img height + ph_2, pw_1 + img width + pw_2)
+  padded = np.pad(img, ((ph, ph), (pw, pw)), mode=border)
+
+  H, W = img.shape
+  out = np.zeros((H, W))
+
+  # Loop over image cells
+  # for y in range(H):
+  #   for x in range(W):
+  #     out[y, x] = np.sum(padded[y:y+kh, x:x+kw] * kernel)
+
+  # Loop over kernel cells
+  for i in range(kh):
+    for j in range(kw):
+      out += kernel[i, j] * padded[i:i+H, j:j+W]
+
+  return out
+```
+
+```{=typst}
+= Sample linear filter rernels
+```
+
+```{python}
+import numpy as np
+
+kernels = {
+ "identity":   (np.array([[0,0,0],[0,1,0],[0,0,0]], float), "unsigned"),
+ "gauss 5x5":  (np.array([[1,4,6,4,1],[4,16,24,16,4],[6,24,36,24,6],
+                         [4,16,24,16,4],[1,4,6,4,1]]) / 256, "unsigned"),
+ "box 5x5":    (np.ones((5,5)) / 25, "unsigned"),
+ "box 11x11":  (np.ones((11,11)) / 121, "unsigned"),
+ "box 21x21":  (np.ones((21,21)) / 441, "unsigned"),
+ "sharpen":    (np.array([[0,-1,0],[-1,5,-1],[0,-1,0]], float), "unsigned"),
+ "laplacian":  (np.array([[0,1,0],[1,-4,1],[0,1,0]], float), "signed"),
+ "sobel_x":    (np.array([[-1,0,1],[-2,0,2],[-1,0,1]], float), "signed"),
+ "sobel_y":    (np.array([[-1,-2,-1],[0,0,0],[1,2,1]], float), "signed"),
+ "emboss":     (np.array([[-2,-1,0],[-1,1,1],[0,1,2]], float), "unsigned"),
+ "motion 9":   (np.vstack([np.zeros((4,9)), np.ones((1,9))/9, np.zeros((4,9))]), "unsigned"),
+}
+
+```
+
+```{=typst}
+= Canny filter
+```
+
+```{python}
+def gaussian_kernel(size=5, sigma=1.4):
+    ax = np.arange(size) - size // 2
+    xx, yy = np.meshgrid(ax, ax)
+    k = np.exp(-(xx**2 + yy**2) / (2 * sigma**2))
+    return k / k.sum()
+
+def sobel_gradients(img):
+    kx = np.array([[-1,0,1],[-2,0,2],[-1,0,1]], float)
+    ky = np.array([[-1,-2,-1],[0,0,0],[1,2,1]], float)  # y points DOWN in image coords
+    gx, gy = filter2d(img, kx), filter2d(img, ky)
+    return np.hypot(gx, gy), np.degrees(np.arctan2(gy, gx)) % 180
+
+def non_max_suppression(mag, ang):
+    H, W = mag.shape
+    p = np.pad(mag, 1)
+
+    # value at (y+dy, x+dx)
+    sh = lambda dy, dx: p[1+dy:1+dy+H, 1+dx:1+dx+W]
+
+    n1, n2 = np.zeros_like(mag), np.zeros_like(mag)
+    cases = [
+        # (mask, neighbour 1, neighbour 2) along the gradient direction
+        ((ang < 22.5) | (ang >= 157.5), (0, 1),  (0, -1)),
+        ((ang >= 22.5)  & (ang < 67.5),  (1, 1),  (-1, -1)),
+        ((ang >= 67.5)  & (ang < 112.5), (1, 0),  (-1, 0)),
+        ((ang >= 112.5) & (ang < 157.5), (1, -1), (-1, 1)),
+    ]
+    for m, a, b in cases:
+        n1[m], n2[m] = sh(*a)[m], sh(*b)[m]
+    return np.where((mag >= n1) & (mag >= n2), mag, 0)
+
+def hysteresis(nms, low, high):
+    H, W = nms.shape
+    strong = nms >= high
+    weak = (nms >= low) & ~strong
+    edges = strong.copy()
+    while True:
+        p = np.pad(edges, 1)
+        near = np.zeros_like(edges)
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if dy or dx:
+                    near |= p[1+dy:1+dy+H, 1+dx:1+dx+W]
+        new = edges | (weak & near)
+        if (new == edges).all():
+            return edges
+        edges = new
+
+def canny(img, size=5, sigma=1.4, low_ratio=0.1, high_ratio=0.25):
+    smooth = filter2d(img, gaussian_kernel(size, sigma))
+    mag, ang = sobel_gradients(smooth)
+    nms = non_max_suppression(mag, ang)
+    high = max(high_ratio * nms.max(), 30)
+    low  = max(low_ratio  * nms.max(), 10)
+    h = hysteresis(nms, low, high)
+    return np.asarray(h.astype(float) * 255, dtype=np.uint8)
+```
+
+```{=typst}
+= Comparison function
+```
+
+```{python}
+def apply_and_compare_kernels(img_path: str, cols=None):
+  img = load_gray(img_path)
+  H, W = img.shape
+  cols = cols or (5 if H > W else 4) # portrait images get more columns
+  panels = [("Original", img)]
+  for label, (kernel, kind) in kernels.items():
+    out = filter2d(img, kernel)
+    if kind == "signed":
+      out = np.abs(out) * 3 # gain so edges are visible
+    panels.append((label, out))
+  panels.append(("Canny", canny(img)))
+  rows = -(-len(panels) // cols) # ceil division
+  pw = 7 / cols # panel width in inches (page is ~7 in wide)
+  fig, axs = plt.subplots(rows, cols, figsize=(7, rows * (pw * H / W + 0.35)),
+                          constrained_layout=True)
+  for ax in axs.flat:
+    ax.axis("off") # also hides the unused cells
+  for ax, (label, im) in zip(axs.flat, panels):
+    ax.imshow(np.clip(im, 0, 255), cmap="gray", vmin=0, vmax=255)
+    ax.set_title(label, fontsize=8)
+  plt.show()
+```
+
+```{=typst}
+= Apply kernels to images
+```
+
+```{=typst}
+   #pagebreak()
+```
+
+```{=typst}
+== Low detail
+```
+
+```{python}
+apply_and_compare_kernels("https://commons.wikimedia.org/wiki/Special:FilePath/Pure_sky.jpg?width=640")
+```
+
+```{=typst}
+   #pagebreak()
+```
+
+```{=typst}
+== High detail
+```
+
+```{python}
+apply_and_compare_kernels("https://opengameart.org/sites/default/files/oga-textures/imgp0985.jpg")
+```
+
+```{=typst}
+   #pagebreak()
+```
+
+```{=typst}
+== Low contrast
+```
+
+```{python}
+apply_and_compare_kernels("https://commons.wikimedia.org/wiki/Special:FilePath/Unequalized_Hawkes_Bay_NZ.jpg?width=640")
+```
+
+```{=typst}
+   #pagebreak()
+```
+
+```{=typst}
+== High contrast
+```
+
+```{python}
+apply_and_compare_kernels("https://commons.wikimedia.org/wiki/Special:FilePath/Equalized_Hawkes_Bay_NZ.jpg?width=640")
+```
+
+```{=typst}
+= Висновки
+
+У ході роботи реалізовано 2D лінійну фільтрацію зображень без використання бібліотек обробки зображень. Використано доповнення меж методом `reflect`. Дві реалізації (цикл за пікселями та цикл за комірками ядра) дають однаковий результат, друга є швидшою завдяки векторизації NumPy.
+
+- *Усереднювальні ядра* (box, Гаусса, motion) є низькочастотними фільтрами. Зі збільшенням розміру ядра (5×5, 11×11, 21×21) розмиття зростає, дрібні деталі зникають. Найсильніше це проявляється на зображеннях із високою деталізацією, на гладких зображеннях зміни менш помітні.
+- *Ядро Гауса* розмиває плавніше, ніж box того ж розміру, оскільки ваги спадають від центру. При розмірі 5×5 на рисунках різниця малопомітна.
+- *Ядра з нульовою сумою* (Собеля, Лапласа) виділяють границі, на однорідних ділянках результат близький до нуля. Відгук сильніший на контрастних зображеннях, на низькоконтрастних границі ледь помітні. Оператор Лапласа (друга похідна) чутливіший до шуму, ніж Собеля.
+- *Ядро sharpen* підсилює границі та дрібні деталі, але водночас підсилює шум.
+- *Алгоритм Canny* дає тонкі границі завдяки п'яти етапам: згладжування, градієнт, придушення немаксимумів, подвійний поріг, гістерезис. Результат залежить від σ і порогів: надто високі пороги втрачають слабкі границі, надто низькі додають шум. Для зображення без границь (небо) відносні пороги дають хибну сітку, бо поріг визначається шумом; абсолютний мінімальний поріг усуває цей ефект (на рисунку Canny для неба порожній).
+- До недоліків належать залежність від розміру ядра та способу доповнення меж, а також висока обчислювальна вартість великих ядер на великих зображеннях.
+- Для зображення з майже відсутніми границями (небо) алгоритм Canny із відносними порогами (частка від максимального градієнта) повертає хибну сітку границь, оскільки поріг визначається шумом. Використання абсолютного мінімального порогу усуває цей ефект.
+```
+
+```{=typst}
+= Джерела зображень
+```
+
+- Низька деталізація: Pure_sky.jpg, Wikimedia Commons (ліцензію вказати зі сторінки файлу).
+- Висока деталізація: imgp0985.jpg, автор bart, OpenGameArt.org, ліцензія CC-BY 3.0.
+- Низький та високий контраст: Unequalized/Equalized_Hawkes_Bay_NZ.jpg, Wikimedia Commons (стаття Histogram equalization).
+
