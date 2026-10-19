@@ -169,7 +169,8 @@ kernels = {
 def gaussian_kernel(size=5, sigma=1.4):
     ax = np.arange(size) - size // 2
     xx, yy = np.meshgrid(ax, ax)
-    k = np.exp(-(xx**2 + yy**2) / (2 * sigma**2))
+    d2 = xx**2 + yy**2
+    k = np.exp(-d2 / (2 * sigma**2))
     return k / k.sum()
 
 def sobel_gradients(img):
