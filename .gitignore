@@ -220,3 +220,7 @@ __marimo__/
 # Quarto cache
 .quarto/
 quarto-cache/
+
+# Loaded artifacts
+*-data/
+data/

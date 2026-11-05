@@ -1,0 +1,458 @@
+---
+title: ""
+lang: uk
+format:
+  typst:
+    mainfont: "Times New Roman"
+    fontsize: 14pt
+    margin: { x: 2.5cm, y: 2.5cm }
+  docx: default
+  pdf:
+    pdf-engine: lualatex
+    mainfont: "Times New Roman"
+---
+
+```{=typst}
+// Configure the page.
+#set page(
+  paper: "a4",
+  // The margins depend on the paper size.
+  margin: (x: 2cm, y: 1.5cm),
+  numbering:  (current, total) => if current > 1 { current }, number-align: right,
+)
+
+// Configure styling
+#set par(
+  leading: 0.8em,
+  spacing: 1em,
+  justify: true,
+)
+#show table: set text(size: 9pt)
+
+#align(top + center)[
+  Міністерство освіти і науки України \
+  Національний університет «Львівська політехніка» \
+  Кафедра систем штучного інтелекту \
+  \
+  #image("logo.png", width: 6cm)
+  \
+  #set par(spacing: 0.4em)
+  #text(size: 24pt, weight: "bold")[Звіт]
+  #set par(spacing: 0.8em)
+
+  *про виконання лабораторної роботи № 3* \
+  _з дисципліни:_ «Обробка зображень методами штучного інтелекту» \
+  _на тему:_ «Класифікація зображень. Застосування нейромереж для пошуку подібних зображень»
+]
+
+#align(bottom + right)[
+  Виконав: \
+  студент групи ШІ-42 \
+  Горишевський Олексій Олександрович
+]
+
+#pagebreak()
+```
+
+
+```{=typst}
+= Завдання
+
+Варіант 2. Побудувати CNN на основі AlexNet для класифікації зображень Fashion-MNIST і налаштувати модель для досягнення необхідної точності (поставлена ціль — не менше 93% на тестовій вибірці). Після цього на базі Siamese networks побудувати систему пошуку подібних зображень у Fashion-MNIST і візуалізувати ознаки за допомогою t-SNE.
+
+= Installing dependencies
+```
+
+```{python}
+%pip install --quiet numpy matplotlib pandas tabulate scikit-learn keras
+%pip install --quiet torch torchvision --index-url https://download.pytorch.org/whl/cu132
+```
+
+```{=typst}
+= GPU check
+```
+```{python}
+import os
+
+os.environ["KERAS_BACKEND"] = "torch"
+
+import json
+from pathlib import Path
+
+import keras
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import torch
+from keras import layers
+from sklearn.manifold import TSNE
+
+print(f"Using Keras version: {keras.__version__}")
+print(f"Using PyTorch version: {torch.__version__}")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Computation will be performed on: {device}")
+
+keras.utils.set_random_seed(42)
+DATA = Path("lab-3-data")
+DATA.mkdir(exist_ok=True)
+```
+
+```{=typst}
+= Loading & preprocessing data
+
+Fashion-MNIST: 60 000 навчальних і 10 000 тестових зображень 28×28 у 10 класах. З навчальної вибірки відкладено 6 000 зображень для валідації. Для сіамської мережі зображення згруповано за класами.
+```
+```{python}
+CLASSES = ["T-shirt/top", "Trouser", "Pullover", "Dress", "Coat",
+           "Sandal", "Shirt", "Sneaker", "Bag", "Ankle boot"]
+
+(x_full, y_full), (x_test, y_test) = keras.datasets.fashion_mnist.load_data()
+x_full = x_full[..., None].astype("float32") / 255
+x_test = x_test[..., None].astype("float32") / 255
+
+perm = np.random.default_rng(42).permutation(len(x_full))
+x_train, y_train = x_full[perm[6000:]], y_full[perm[6000:]]
+x_val, y_val = x_full[perm[:6000]], y_full[perm[:6000]]
+
+
+def by_class(x, y):
+    return [x[y == c] for c in range(len(CLASSES))]
+
+
+train_groups, val_groups, test_groups = by_class(x_train, y_train), by_class(x_val, y_val), by_class(x_test, y_test)
+print("Training", x_train.shape, "Validation", x_val.shape, "Testing", x_test.shape)
+print("train groups:", [len(g) for g in train_groups])
+```
+
+```{=typst}
+= AlexNet for Fashion-MNIST
+
+AlexNet має 5 згорткових шарів (96, 256, 384, 384, 256 фільтрів), три max-pooling 3×3 з кроком 2 і повнозв'язні шари 4096–4096–класи з dropout 0.5. Оригінальна мережа розрахована на вхід 227×227, тому для зображень 28×28 перші ядра зменшено з 11×11/4 і 5×5 до 5×5 з кроком 1. Решта структури збережена, просторовий розмір змінюється так: 28 → 13 → 6 → 2.
+```
+```{python}
+def conv_block(x, filters, kernel, bn, name):
+    x = layers.Conv2D(filters, kernel, padding="same", use_bias=not bn, name=name)(x)
+    if bn:
+        x = layers.BatchNormalization(name=f"{name}_bn")(x)
+    return layers.Activation("relu", name=f"{name}_relu")(x)
+
+
+def alexnet_features(x, bn=True):
+    x = conv_block(x, 96, 5, bn, "conv1")
+    x = layers.MaxPool2D(3, 2, name="pool1")(x)  # 28 -> 13
+    x = conv_block(x, 256, 5, bn, "conv2")
+    x = layers.MaxPool2D(3, 2, name="pool2")(x)  # 13 -> 6
+    x = conv_block(x, 384, 3, bn, "conv3")
+    x = conv_block(x, 384, 3, bn, "conv4")
+    x = conv_block(x, 256, 3, bn, "conv5")
+    x = layers.MaxPool2D(3, 2, name="pool5")(x)  # 6 -> 2
+    return layers.Flatten(name="flatten")(x)
+
+
+def dense_block(x, units, bn, name):
+    x = layers.Dense(units, use_bias=not bn, name=name)(x)
+    if bn:
+        x = layers.BatchNormalization(name=f"{name}_bn")(x)
+    x = layers.Activation("relu", name=f"{name}_relu")(x)
+    return layers.Dropout(0.5, name=f"{name}_drop")(x)
+
+
+def alexnet(bn=True, augment=False):
+    inp = keras.Input((28, 28, 1), name="image")
+    x = inp
+    if augment:
+        x = layers.RandomFlip("horizontal", name="flip")(x)
+        x = layers.RandomTranslation(0.1, 0.1, fill_mode="constant", name="shift")(x)
+    x = alexnet_features(x, bn)
+    x = dense_block(x, 4096, bn, "fc6")
+    x = dense_block(x, 4096, bn, "fc7")
+    out = layers.Dense(len(CLASSES), activation="softmax", name="fc8")(x)
+    return keras.Model(inp, out, name="AlexNet")
+
+
+alexnet().summary(line_length=90)
+```
+
+```{=typst}
+== Tuning
+
+Порівнюються три варіанти навчання:
+
++ оригінальна схема AlexNet: SGD з моментом 0.9, $l r = 0.01$, weight decay $5 dot 10^(-4)$;
++ BatchNormalization після кожного шару та оптимізатор AdamW;
++ додатково аугментація (віддзеркалення, зсув до 10%), label smoothing 0.1 і косинусне зменшення кроку навчання.
+
+Ваги та історія навчання зберігаються на диск, тому повторне виконання звіту не перенавчає моделі.
+```
+```{python}
+BATCH = 256
+STEPS_PER_EPOCH = int(np.ceil(len(x_train) / BATCH))
+
+
+def onehot(y):
+    return keras.utils.to_categorical(y, len(CLASSES))
+
+
+CONFIGS = {
+    "AlexNet, SGD": (lambda: alexnet(bn=False), keras.optimizers.SGD(0.01, momentum=0.9, weight_decay=5e-4),
+                     "categorical_crossentropy", 20),
+    "AlexNet + BN, AdamW": (lambda: alexnet(bn=True), keras.optimizers.AdamW(1e-3, weight_decay=1e-4),
+                            "categorical_crossentropy", 20),
+    "AlexNet + BN, AdamW, augmentation": (
+        lambda: alexnet(bn=True, augment=True),
+        keras.optimizers.AdamW(keras.optimizers.schedules.CosineDecay(1e-3, 30 * STEPS_PER_EPOCH), weight_decay=1e-4),
+        keras.losses.CategoricalCrossentropy(label_smoothing=0.1), 30),
+}
+
+classifiers, histories, rows = {}, {}, []
+for i, (name, (build, optimizer, loss, epochs)) in enumerate(CONFIGS.items()):
+    model = build()
+    model.compile(optimizer=optimizer, loss=loss, metrics=["accuracy"])
+    weights, hist_file = DATA / f"alexnet-{i}.weights.h5", DATA / f"alexnet-{i}.history.json"
+    if weights.exists():
+        model.load_weights(weights)
+        hist = json.loads(hist_file.read_text())
+    else:
+        hist = model.fit(x_train, onehot(y_train), batch_size=BATCH, epochs=epochs, verbose=2,
+                         validation_data=(x_val, onehot(y_val))).history
+        model.save_weights(weights)
+        hist_file.write_text(json.dumps(hist))
+    classifiers[name], histories[name] = model, hist
+    _, test_acc = model.evaluate(x_test, onehot(y_test), batch_size=1024, verbose=0)
+    rows.append({"model": name, "epochs": epochs, "best val accuracy": max(hist["val_accuracy"]),
+                 "test accuracy": test_acc})
+
+_, ax = plt.subplots(figsize=(7, 2.6), constrained_layout=True)
+for name, hist in histories.items():
+    ax.plot(np.arange(1, len(hist["val_accuracy"]) + 1), hist["val_accuracy"], label=name)
+ax.set(title="validation accuracy", xlabel="epoch", ylim=(0.85, 0.95))
+ax.legend(fontsize=7)
+ax.grid(alpha=0.3)
+plt.show()
+```
+```{python}
+#| output: asis
+print(pd.DataFrame(rows).to_markdown(index=False, floatfmt=".4f"))
+best = classifiers["AlexNet + BN, AdamW, augmentation"]
+```
+
+```{=typst}
+#pagebreak()
+= Siamese model
+
+Сіамська мережа складається з генератора ознак, який з тими самими вагами застосовується до зображень A і B, і голови, яка за конкатенацією двох векторів ознак прогнозує ймовірність того, що зображення належать до одного класу.
+
+Генератор ознак — згорткова частина AlexNet і шар Dense(32) з dropout, BatchNorm і ReLU, як у методичних вказівках. Його згорткові шари ініціалізовано вагами налаштованого класифікатора. Голова: Dense(16) → Dense(4) → Dense(1) з сигмоїдою.
+
+== Batch generation
+
+Половина пар у батчі — зображення одного класу (схожість 1), половина — різних класів (схожість 0). Без цього приблизно 90% випадкових пар були б із різних класів.
+```
+```{python}
+def gen_random_batch(groups, batch_halfsize=8, rng=np.random):
+    out_a, out_b, out_score = [], [], []
+    all_groups = np.arange(len(groups))
+    for match_group in (True, False):
+        group_idx = rng.choice(all_groups, size=batch_halfsize)
+        out_a += [groups[c][rng.randint(len(groups[c]))] for c in group_idx]
+        if match_group:
+            b_group_idx = group_idx
+        else:  # anything but the same group
+            b_group_idx = [rng.choice(all_groups[all_groups != c]) for c in group_idx]
+        out_score += [float(match_group)] * batch_halfsize
+        out_b += [groups[c][rng.randint(len(groups[c]))] for c in b_group_idx]
+    return np.stack(out_a), np.stack(out_b), np.array(out_score, "float32")
+
+
+class PairBatches(keras.utils.PyDataset):
+    """Endless stream of balanced random pairs for model.fit."""
+
+    def __init__(self, groups, batch_size=64, steps=500, seed=0):
+        super().__init__()
+        self.groups, self.half, self.steps = groups, batch_size // 2, steps
+        self.rng = np.random.RandomState(seed)
+
+    def __len__(self):
+        return self.steps
+
+    def __getitem__(self, _):
+        a, b, sim = gen_random_batch(self.groups, self.half, self.rng)
+        return (a, b), sim
+
+
+def show_pairs(a, b, titles_a, titles_b):
+    _, axs = plt.subplots(2, len(a), figsize=(7, 3), constrained_layout=True)
+    for img_a, img_b, ta, tb, (ax1, ax2) in zip(a, b, titles_a, titles_b, axs.T):
+        ax1.imshow(img_a[..., 0], cmap="gray_r")
+        ax1.set_title(ta, fontsize=7)
+        ax2.imshow(img_b[..., 0], cmap="gray_r")
+        ax2.set_title(tb, fontsize=7)
+        ax1.axis("off")
+        ax2.axis("off")
+    plt.show()
+
+
+pv_a, pv_b, pv_sim = gen_random_batch(train_groups, 3, np.random.RandomState(1))
+show_pairs(pv_a, pv_b, ["Image A"] * 6, [f"Image B\nSimilarity: {100 * s:3.0f}%" for s in pv_sim])
+```
+
+```{=typst}
+== Feature generation & similarity model
+```
+```{python}
+EMBED = 32
+
+
+def feature_generator():
+    img_in = keras.Input((28, 28, 1), name="FeatureNet_ImageInput")
+    x = alexnet_features(img_in, bn=True)
+    x = layers.Dense(EMBED, name="feat_dense")(x)
+    x = layers.Dropout(0.5, name="feat_drop")(x)
+    x = layers.BatchNormalization(name="feat_bn")(x)
+    x = layers.Activation("relu", name="feat_relu")(x)
+    return keras.Model(img_in, x, name="FeatureGenerationModel")
+
+
+def similarity_head():
+    fa, fb = keras.Input((EMBED,), name="FeatA"), keras.Input((EMBED,), name="FeatB")
+    x = layers.Concatenate(name="merge_features")([fa, fb])
+    for units in (16, 4):
+        x = layers.Dense(units, name=f"head{units}")(x)
+        x = layers.BatchNormalization(name=f"head{units}_bn")(x)
+        x = layers.Activation("relu", name=f"head{units}_relu")(x)
+    out = layers.Dense(1, activation="sigmoid", name="similarity")(x)
+    return keras.Model([fa, fb], out, name="SimilarityHead")
+
+
+features, head = feature_generator(), similarity_head()
+for layer in features.layers:  # conv weights of the tuned classifier
+    if layer.name.startswith("conv"):
+        layer.set_weights(best.get_layer(layer.name).get_weights())
+img_a, img_b = keras.Input((28, 28, 1), name="ImageA_Input"), keras.Input((28, 28, 1), name="ImageB_Input")
+similarity_model = keras.Model([img_a, img_b], head([features(img_a), features(img_b)]), name="Similarity_Model")
+similarity_model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["mae", "binary_accuracy"])
+similarity_model.summary(line_length=90)
+```
+
+```{=typst}
+== Training
+
+До навчання мережа видає випадкові оцінки схожості. Навчання — 15 епох по 500 батчів з 64 пар, для валідації використано фіксований набір із 2 048 пар з валідаційної вибірки.
+```
+```{python}
+def show_model_output(nb_examples=3, seed=7):
+    pv_a, pv_b, pv_sim = gen_random_batch(test_groups, nb_examples, np.random.RandomState(seed))
+    pred_sim = similarity_model.predict([pv_a, pv_b], verbose=0)[:, 0]
+    show_pairs(pv_a, pv_b, [f"Image A\nActual: {100 * s:3.0f}%" for s in pv_sim],
+               [f"Image B\nPredicted: {100 * p:3.0f}%" for p in pred_sim])
+
+
+show_model_output()  # untrained network
+
+weights, hist_file = DATA / "siamese-alexnet.weights.h5", DATA / "siamese-alexnet.history.json"
+if weights.exists():
+    similarity_model.load_weights(weights)
+    hist = json.loads(hist_file.read_text())
+else:
+    valid_a, valid_b, valid_sim = gen_random_batch(val_groups, 1024, np.random.RandomState(2))
+    hist = similarity_model.fit(PairBatches(train_groups), validation_data=([valid_a, valid_b], valid_sim),
+                                epochs=15, verbose=2).history
+    similarity_model.save_weights(weights)
+    hist_file.write_text(json.dumps(hist))
+
+test_a, test_b, test_sim = gen_random_batch(test_groups, 2048, np.random.RandomState(3))
+_, mae, acc = similarity_model.evaluate([test_a, test_b], test_sim, batch_size=1024, verbose=0)
+print(f"validation pair accuracy by epoch: {np.round(hist['val_binary_accuracy'], 3)}")
+print(f"test: {len(test_sim)} pairs, MAE {mae:.4f}, pair accuracy {acc:.4f}")
+show_model_output()
+```
+
+```{=typst}
+#pagebreak()
+= Similar image search
+
+Вектори ознак усіх 60 000 зображень бази обчислюються генератором ознак один раз і зберігаються. Для зображення-запиту обчислюється лише його вектор, після чого голова сіамської мережі оцінює схожість запиту з кожним вектором бази, а результати сортуються за спаданням схожості.
+
+Якість пошуку оцінено на 1 000 випадкових тестових запитах за метрикою precision\@k — часткою зображень того ж класу серед перших $k$ результатів.
+```
+```{python}
+db = features.predict(x_full, batch_size=1024, verbose=0)
+
+
+def search_scores(queries):
+    q = features.predict(queries, batch_size=1024, verbose=0)
+    return np.stack([head.predict([np.repeat(f[None], len(db), 0), db], batch_size=8192, verbose=0)[:, 0]
+                     for f in q])
+
+
+q_idx = np.random.default_rng(0).choice(len(x_test), 1000, replace=False)
+top = np.argsort(-search_scores(x_test[q_idx]), 1)[:, :10]
+hits = y_full[top] == y_test[q_idx, None]
+print(", ".join(f"P@{k} = {hits[:, :k].mean():.3f}" for k in (1, 5, 10)))
+```
+```{python}
+examples = [np.flatnonzero(y_test == c)[0] for c in (0, 2, 3, 5, 6, 8)]
+scores = search_scores(x_test[examples])
+_, axs = plt.subplots(len(examples), 9, figsize=(7, 5.6), constrained_layout=True)
+for row, i, s in zip(axs, examples, scores):
+    row[0].imshow(x_test[i, ..., 0], cmap="gray_r")
+    row[0].set_title(f"query:\n{CLASSES[y_test[i]]}", fontsize=6, fontweight="bold")
+    for ax, j in zip(row[1:], np.argsort(-s)[:8]):
+        ax.imshow(x_full[j, ..., 0], cmap="gray_r")
+        ax.set_title(f"{CLASSES[y_full[j]]}\n{s[j]:.3f}", fontsize=6,
+                     color="green" if y_full[j] == y_test[i] else "red")
+    for ax in row:
+        ax.axis("off")
+plt.show()
+```
+
+```{=typst}
+== T-Shirt vs Ankle Boot plot
+
+Схожість кожного тестового зображення з однією футболкою (клас 0) і одним черевиком (клас 9) з навчальної вибірки.
+```
+```{python}
+test_feats = features.predict(x_test, batch_size=1024, verbose=0)
+anchor_feats = features.predict(np.stack([train_groups[0][0], train_groups[-1][0]]), verbose=0)
+t_shirt_score, ankle_boot_score = (
+    head.predict([np.repeat(f[None], len(x_test), 0), test_feats], batch_size=8192, verbose=0)[:, 0]
+    for f in anchor_feats
+)
+
+colors = plt.cm.rainbow(np.linspace(0, 1, 10))
+_, ax = plt.subplots(figsize=(7, 5), constrained_layout=True)
+for c, (color, label) in enumerate(zip(colors, CLASSES)):
+    ax.scatter(t_shirt_score[y_test == c], ankle_boot_score[y_test == c], marker=".", s=8,
+               color=color, alpha=0.6, label=label)
+ax.set(xlabel="T-Shirt dimension", ylabel="Ankle-Boot dimension", title="T-Shirt and Ankle-Boot dimension")
+ax.legend(loc="upper right", fontsize=7, markerscale=3)
+plt.show()
+```
+
+```{=typst}
+= Feature check: t-SNE
+
+32-вимірні вектори ознак тестових зображень, спроєктовані на площину методом t-SNE.
+```
+```{python}
+tsne_features = TSNE(n_components=2, init="pca", random_state=101).fit_transform(test_feats)
+_, ax = plt.subplots(figsize=(7, 5.5), constrained_layout=True)
+for c, (color, label) in enumerate(zip(colors, CLASSES)):
+    ax.scatter(tsne_features[y_test == c, 0], tsne_features[y_test == c, 1], s=1, color=color, alpha=0.6,
+               label=label)
+ax.set(title="t-SNE on testing samples", xticks=[], yticks=[])
+ax.legend(fontsize=7, markerscale=6)
+plt.show()
+```
+
+```{=typst}
+= Висновки
+
+У роботі побудовано класифікатор Fashion-MNIST на основі AlexNet і систему пошуку подібних зображень на основі сіамської мережі (Keras, backend PyTorch).
+
+- *AlexNet* адаптовано до входу 28×28 зменшенням перших ядер. Кількість фільтрів, pooling із перекриттям і FC-шари 4096 збережено. З оригінальною схемою навчання (SGD) точність на тесті становить 91.3%. BatchNorm з AdamW при сталому кроці навчання прискорює збіжність, але валідаційна точність коливається, і результат гірший — 90.0%. Аугментація, label smoothing і косинусне зменшення кроку дали *93.2%* на тесті, тобто поставлену ціль ($>= 93%$) досягнуто. Найважче розрізняються сорочки, футболки, светри та пальта.
+- *Сіамська мережа* побудована за схемою методичних вказівок: спільний генератор 32-вимірних ознак і голова, що за конкатенацією ознак прогнозує схожість. Ініціалізація згорткових шарів вагами налаштованого класифікатора дає точність 92.6% на збалансованих тестових парах.
+- *Пошук*. Ознаки бази (60 000 зображень) обчислюються один раз, а для запиту — лише його вектор і 60 000 проходів маленької голови. Precision\@1 = 0.79, precision\@10 = 0.78. Голова навчена як бінарний класифікатор «той самий / інший клас», а не як функція ранжування. Тому серед найвищих оцінок трапляються впевнені, але хибні пари схожих категорій (сорочка — футболка — светр).
+- *T-Shirt vs Ankle Boot* показує, що оцінки схожості майже бінарні: взуття (сандалі, кросівки, черевики) має високу схожість із черевиком, верхній одяг — із футболкою, решта класів — низьку з обома.
+- *t-SNE* ознак дає чіткі кластери для штанів, сумок і взуття (сандалі, кросівки й черевики лежать поруч). Кластери футболок, сорочок, светрів і пальт частково перекриваються, що відповідає основним помилкам класифікатора.
+```
