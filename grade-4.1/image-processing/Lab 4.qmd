@@ -1,0 +1,722 @@
+---
+title: ""
+lang: uk
+format:
+  typst:
+    mainfont: "Times New Roman"
+    fontsize: 14pt
+    margin: { x: 2.5cm, y: 2.5cm }
+  docx: default
+  pdf:
+    pdf-engine: lualatex
+    mainfont: "Times New Roman"
+---
+
+```{=typst}
+// Configure the page.
+#set page(
+  paper: "a4",
+  // The margins depend on the paper size.
+  margin: (x: 2cm, y: 1.5cm),
+  numbering:  (current, total) => if current > 1 { current }, number-align: right,
+)
+
+// Configure styling
+#set par(
+  leading: 0.8em,
+  spacing: 1em,
+  justify: true,
+)
+#show table: set text(size: 9pt)
+
+#align(top + center)[
+  Міністерство освіти і науки України \
+  Національний університет «Львівська політехніка» \
+  Кафедра систем штучного інтелекту \
+  \
+  #image("logo.png", width: 6cm)
+  \
+  #set par(spacing: 0.4em)
+  #text(size: 24pt, weight: "bold")[Звіт]
+  #set par(spacing: 0.8em)
+
+  *про виконання лабораторної роботи № 4* \
+  _з дисципліни:_ «Обробка зображень методами штучного інтелекту» \
+  _на тему:_ «Детекція об'єктів»
+]
+
+#align(bottom + right)[
+  Виконав: \
+  студент групи ШІ-42 \
+  Горишевський Олексій Олександрович
+]
+
+#pagebreak()
+```
+
+```{=typst}
+= Завдання
+
+Завдання 3-го рівня складності, варіант 2: реалізувати детекцію об'єктів за допомогою мережі DeepID-Net. Мережу написано власноруч на Keras (backend PyTorch) і навчено з нуля, без готових детекторів і попередньо натренованих ваг.
+
+DeepID-Net (Ouyang et al., CVPR 2015) — детектор за схемою R-CNN: регіони-претенденти, отримані методом selective search, відображаються в квадрат фіксованого розміру, класифікуються згортковою мережею, а їхні рамки уточнюються регресором. Головна відмінність DeepID-Net — шар *def-pooling*, який навчає частини об'єкта разом з допустимими зсувами (деформаціями) цих частин. Оригінальна робота також використовує попереднє навчання на рамках об'єктів, моделювання контексту та усереднення моделей. Ці додаткові етапи тут не відтворюються, а внесок def-pooling оцінено порівнянням із такою самою мережею, де замість нього звичайний max-pooling.
+
+= Installing dependencies
+```
+
+```{python}
+%pip install --quiet numpy matplotlib pandas tabulate pillow scikit-image opencv-python-headless keras
+%pip install --quiet torch torchvision --index-url https://download.pytorch.org/whl/cu132
+```
+
+```{=typst}
+= GPU check
+```
+```{python}
+import os
+
+os.environ["KERAS_BACKEND"] = "torch"
+
+import heapq
+import json
+import multiprocessing as mp
+import time
+import xml.etree.ElementTree as ET
+from functools import partial
+from pathlib import Path
+
+import cv2 as cv
+import keras
+import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import torch
+from keras import layers, ops
+from PIL import Image
+from skimage import color as skcolor
+from skimage.segmentation import felzenszwalb
+
+print(f"Using Keras version: {keras.__version__}")
+print(f"Using PyTorch version: {torch.__version__}")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Computation will be performed on: {device}")
+
+keras.utils.set_random_seed(0)
+keras.mixed_precision.set_global_policy("mixed_bfloat16")
+DATA = Path("lab-4-data")
+VOC = DATA / "VOCdevkit"
+```
+
+```{=typst}
+= Dataset
+
+Pascal VOC, 20 класів. Навчання — VOC 2007 train + VOC 2012 trainval (14 041 зображення), вибір гіперпараметрів — VOC 2007 val, фінальна оцінка — VOC 2007 test (4 952 зображення). Зображення зменшено до 256 пікселів по довшій стороні і збережено в масиві uint8 на диску. Об'єкти з позначкою _difficult_ не використовуються для навчання та ігноруються під час оцінки, як в офіційному протоколі VOC.
+```
+```{python}
+CLASSES = ["aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow",
+           "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa",
+           "train", "tvmonitor"]
+NC, SIDE = len(CLASSES), 256
+SPLITS = {"train": [("VOC2007", "train"), ("VOC2012", "trainval")], "val": [("VOC2007", "val")],
+          "test": [("VOC2007", "test")]}
+
+
+def load_record(item):
+    year, image_id = item
+    img = Image.open(VOC / year / "JPEGImages" / f"{image_id}.jpg").convert("RGB")
+    s = SIDE / max(img.size)
+    w, h = round(img.width * s), round(img.height * s)
+    pixels = np.zeros((SIDE, SIDE, 3), np.uint8)
+    pixels[:h, :w] = np.asarray(img.resize((w, h), Image.BILINEAR))
+    boxes, labels, difficult = [], [], []
+    for obj in ET.parse(VOC / year / "Annotations" / f"{image_id}.xml").findall("object"):
+        bb = obj.find("bndbox")
+        x0, y0, x1, y1 = (float(bb.find(k).text) for k in ("xmin", "ymin", "xmax", "ymax"))
+        boxes.append([(x0 - 1) * s, (y0 - 1) * s, x1 * s, y1 * s])
+        labels.append(CLASSES.index(obj.find("name").text.strip()))
+        difficult.append(obj.find("difficult").text == "1")
+    meta = {"size": (h, w), "boxes": np.array(boxes, np.float32).reshape(-1, 4),
+            "labels": np.array(labels), "difficult": np.array(difficult)}
+    return pixels, meta
+
+
+def load_split(name):
+    """Images as a memory-mapped (N, 256, 256, 3) array, cached on disk, plus annotations."""
+    pix_file, meta_file = DATA / f"{name}-images.u8", DATA / f"{name}-meta.npy"
+    if not meta_file.exists():
+        items = [(year, i) for year, part in SPLITS[name]
+                 for i in (VOC / year / "ImageSets" / "Main" / f"{part}.txt").read_text().split()]
+        pixels = np.lib.format.open_memmap(pix_file, "w+", np.uint8, (len(items), SIDE, SIDE, 3))
+        with mp.get_context("fork").Pool() as pool:
+            records = list(pool.imap(load_record, items, chunksize=32))
+        for k, (p, _) in enumerate(records):
+            pixels[k] = p
+        pixels.flush()
+        np.save(meta_file, np.array([m for _, m in records], dtype=object), allow_pickle=True)
+    return np.load(pix_file, mmap_mode="r"), list(np.load(meta_file, allow_pickle=True))
+
+
+data = {name: load_split(name) for name in SPLITS}
+print({name: len(meta) for name, (_, meta) in data.items()}, "images")
+```
+
+```{=typst}
+= Region proposals: selective search
+
+Власна реалізація selective search (Uijlings et al., 2013). Зображення розбивається на дрібні регіони графовою сегментацією Felzenszwalb (`scikit-image`). Далі сусідні регіони жадібно об'єднуються за сумою подібностей кольору (гістограми по 25 бінів на канал), текстури (гістограми орієнтацій і модулів градієнта), розміру та заповнення спільної рамки. Рамка кожного регіону ієрархії є претендентом. Ієрархії будуються для 12 стратегій: 2 колірні простори (HSV, Lab), 3 масштаби сегментації та 2 набори подібностей. Претенденти ранжуються за позицією в ієрархії, помноженою на випадкове число, як в оригінальній статті. Залишається не більше 2 000 рамок на зображення.
+```
+```{python}
+def region_hist(values, labels, n, bins):
+    b = np.minimum((values * bins).astype(np.int64), bins - 1)
+    h = np.bincount(labels * bins + b, minlength=n * bins).reshape(n, bins).astype(np.float32)
+    return h / h.sum(1, keepdims=True)
+
+
+def texture_codes(img):
+    """Gradient orientation (8 bins) x magnitude (10 bins) of every pixel, per channel, in [0, 1)."""
+    codes = []
+    for c in range(3):
+        gy, gx = np.gradient(img[..., c])
+        ori = ((np.arctan2(gy, gx) + np.pi) / (2 * np.pi) * 8).astype(np.int64) % 8
+        mag = np.hypot(gx, gy)
+        mag = np.minimum(mag / (mag.max() + 1e-6), 0.999)
+        codes.append((ori * 10 + (mag * 10).astype(np.int64)) / 80 + 1e-6)
+    return codes
+
+
+def grouping(img, labels, use_color):
+    """Greedy hierarchical grouping of adjacent regions; returns the box of every region in the hierarchy."""
+    h, w = labels.shape
+    n, flat = labels.max() + 1, labels.ravel()
+    ys, xs = np.mgrid[0:h, 0:w]
+    box = np.zeros((n, 4))
+    box[:, :2] = [w, h]
+    np.minimum.at(box[:, 0], flat, xs.ravel())
+    np.minimum.at(box[:, 1], flat, ys.ravel())
+    np.maximum.at(box[:, 2], flat, xs.ravel() + 1)
+    np.maximum.at(box[:, 3], flat, ys.ravel() + 1)
+    size = np.bincount(flat, minlength=n).astype(np.float64)
+    col = np.hstack([region_hist(img[..., c].ravel(), flat, n, 25) for c in range(3)]) / 3
+    tex = np.hstack([region_hist(code.ravel(), flat, n, 80) for code in texture_codes(img)]) / 3
+    total = float(h * w)
+    regions = {i: (size[i], box[i], col[i], tex[i]) for i in range(n)}
+
+    def similarity(a, b):
+        (sa, ba, ca, ta), (sb, bb, cb, tb) = regions[a], regions[b]
+        bbox = (max(ba[2], bb[2]) - min(ba[0], bb[0])) * (max(ba[3], bb[3]) - min(ba[1], bb[1]))
+        s = np.minimum(ta, tb).sum() + 2 - (sa + sb) / total - (bbox - sa - sb) / total
+        return s + np.minimum(ca, cb).sum() if use_color else s
+
+    pairs = np.concatenate([np.stack([labels[:, :-1].ravel(), labels[:, 1:].ravel()], 1),
+                            np.stack([labels[:-1].ravel(), labels[1:].ravel()], 1)])
+    pairs = np.unique(np.sort(pairs[pairs[:, 0] != pairs[:, 1]], 1), axis=0)
+    neighbours = {i: set() for i in range(n)}
+    for a, b in pairs:
+        neighbours[a].add(b)
+        neighbours[b].add(a)
+    heap = [(-similarity(a, b), a, b) for a, b in pairs]
+    heapq.heapify(heap)
+    boxes, new = list(box), n
+    while heap:
+        _, a, b = heapq.heappop(heap)
+        if a not in regions or b not in regions:  # one of them is already merged
+            continue
+        (sa, ba, ca, ta), (sb, bb, cb, tb) = regions.pop(a), regions.pop(b)
+        s = sa + sb
+        merged = np.r_[np.minimum(ba[:2], bb[:2]), np.maximum(ba[2:], bb[2:])]
+        regions[new] = (s, merged, (ca * sa + cb * sb) / s, (ta * sa + tb * sb) / s)
+        neighbours[new] = (neighbours.pop(a) | neighbours.pop(b)) - {a, b}
+        for k in neighbours[new]:
+            neighbours[k] -= {a, b}
+            neighbours[k].add(new)
+            heapq.heappush(heap, (-similarity(new, k), new, k))
+        boxes.append(merged)
+        new += 1
+    return np.array(boxes)
+
+
+def selective_search(img, max_boxes=2000, seed=0):
+    rng = np.random.default_rng(seed)
+    f = img.astype(np.float32) / 255
+    spaces = [skcolor.rgb2hsv(f), (skcolor.rgb2lab(f) + [0, 128, 128]) / [100, 255, 255]]
+    boxes, priority = [], []
+    for im in spaces:
+        im = np.clip(im, 0, 1).astype(np.float32)
+        for k in (50, 100, 200):
+            labels = felzenszwalb(im, scale=k, sigma=0.8, min_size=20)
+            for use_color in (True, False):
+                b = grouping(im, labels, use_color)
+                boxes.append(b)
+                priority.append(np.arange(len(b), 0, -1) * rng.random(len(b)))  # 1 = whole image
+    boxes = np.concatenate(boxes)[np.argsort(np.concatenate(priority))]
+    boxes = boxes[np.min(boxes[:, 2:] - boxes[:, :2], 1) >= 8]
+    _, first = np.unique(boxes, axis=0, return_index=True)
+    return boxes[np.sort(first)][:max_boxes].astype(np.uint16)
+
+
+def proposals_for(item):
+    pixels, (h, w) = item
+    return selective_search(np.asarray(pixels[:h, :w]))
+
+
+def load_proposals(name):
+    path = DATA / f"{name}-proposals.npz"
+    pixels, meta = data[name]
+    if not path.exists():
+        with mp.get_context("fork").Pool() as pool:
+            props = list(pool.imap(proposals_for, ((pixels[k], m["size"]) for k, m in enumerate(meta)), 8))
+        np.savez(path, boxes=np.concatenate(props), offsets=np.cumsum([0] + [len(p) for p in props]))
+    f = np.load(path)
+    boxes, off = f["boxes"].astype(np.float32), f["offsets"]
+    return [boxes[a:b] for a, b in zip(off[:-1], off[1:])]
+
+
+proposals = {name: load_proposals(name) for name in SPLITS}
+```
+```{python}
+def box_iou(a, b):
+    x0, y0 = np.maximum(a[:, None, 0], b[None, :, 0]), np.maximum(a[:, None, 1], b[None, :, 1])
+    x1, y1 = np.minimum(a[:, None, 2], b[None, :, 2]), np.minimum(a[:, None, 3], b[None, :, 3])
+    inter = (x1 - x0).clip(0) * (y1 - y0).clip(0)
+    area_a = (a[:, 2] - a[:, 0]) * (a[:, 3] - a[:, 1])
+    area_b = (b[:, 2] - b[:, 0]) * (b[:, 3] - b[:, 1])
+    return inter / (area_a[:, None] + area_b[None, :] - inter + 1e-9)
+
+
+def draw_box(ax, box, color, text=None, lw=1.2):
+    x0, y0, x1, y1 = box
+    ax.add_patch(mpatches.Rectangle((x0, y0), x1 - x0, y1 - y0, fill=False, color=color, lw=lw))
+    if text:
+        ax.text(x0, y0, text, fontsize=6, color="white", va="bottom", bbox=dict(facecolor=color, pad=0.5, lw=0))
+
+
+test_pixels, test_meta = data["test"]
+best = np.concatenate([box_iou(m["boxes"][~m["difficult"]], p).max(1)
+                       for m, p in zip(test_meta, proposals["test"]) if (~m["difficult"]).any()])
+print(f"{np.mean([len(p) for p in proposals['test']]):.0f} proposals per image, "
+      f"recall @ IoU 0.5: {np.mean(best >= 0.5):.3f}, mean best overlap: {best.mean():.3f}")
+
+```
+
+```{=typst}
+= DeepID-Net
+
+== Def-pooling layer
+
+Вхід шару — карти детекції частин $M_c$ (виходи згорткових фільтрів, кожен з яких відповідає певній частині об'єкта). Для кожної позиції $(x, y)$ шар шукає найкраще положення частини в околі $[-R, R]^2$ від опорного положення і штрафує зсув:
+
+$ b_c^((x, y)) = max_(delta_x, delta_y in [-R, R]) [ m_c^((s x + delta_x, s y + delta_y)) - sum_(n=1)^4 a_(c, n) d_n^(delta_x, delta_y) ], quad d^(delta_x, delta_y) = (delta_x, delta_y, delta_x^2, delta_y^2) $
+
+Штрафи $a_(c, n)$ навчаються разом з рештою мережі. Квадратичні штрафи невід'ємні (через softplus), тому частина «тяжіє» до опорного положення, а лінійні можуть його зсунути. При нульових штрафах def-pooling збігається зі звичайним max-pooling.
+```
+```{python}
+class DefPooling(layers.Layer):
+    """Deformation-constrained pooling (Ouyang et al., 2015), NHWC."""
+
+    def __init__(self, radius=2, stride=2, **kwargs):
+        super().__init__(**kwargs)
+        self.radius, self.stride = radius, stride
+        d = np.arange(-radius, radius + 1, dtype="float32")
+        dy, dx = np.meshgrid(d, d, indexing="ij")
+        self.d = np.stack([dx.ravel(), dy.ravel(), dx.ravel() ** 2, dy.ravel() ** 2], 1)  # (K, 4)
+
+    def build(self, input_shape):
+        c = input_shape[-1]
+        self.linear = self.add_weight(shape=(2, c), initializer="zeros", name="linear")
+        self.quadratic = self.add_weight(shape=(2, c), initializer=keras.initializers.Constant(-2.0),
+                                         name="quadratic")
+
+    def penalty(self):
+        """(K, C) cost of each of the K = (2R+1)^2 displacements for every part."""
+        a = ops.concatenate([self.linear, ops.softplus(self.quadratic)], 0)  # (4, C)
+        return ops.matmul(ops.convert_to_tensor(self.d), a)
+
+    def call(self, x):
+        r, side = self.radius, 2 * self.radius + 1
+        h, w = x.shape[1], x.shape[2]
+        padded = ops.pad(x, [[0, 0], [r, r], [r, r], [0, 0]], constant_values=-1e4)
+        cost = ops.cast(self.penalty(), x.dtype)
+        out = None
+        for k in range(side * side):
+            i, j = divmod(k, side)
+            cand = padded[:, i:i + h, j:j + w, :] - cost[k]
+            out = cand if out is None else ops.maximum(out, cand)
+        return out[:, :: self.stride, :: self.stride, :]
+```
+
+```{=typst}
+== Network
+
+Оригінальна DeepID-Net побудована на GoogLeNet/ZF і отримує регіони 227×227. Тут через навчання з нуля на одному ноутбучному GPU використано компактну VGG-подібну мережу з регіонами 64×64 або 96×96 (вибирається під час налаштування) і такою самою структурою:
+
+- conv1–conv5 (10 згорток 3×3 з BatchNorm) — спільна карта ознак 6×6×256 (4×4×256 для регіонів 64×64);
+- гілка R-CNN: pool5 → fc6 (1024) → fc7 (1024);
+- гілка частин: 64 фільтри частин 3×3 і 64 фільтри 5×5 на conv5 → def-pooling ($R = 2$, крок 2) → fc (256);
+- конкатенація обох гілок → softmax на 21 клас (20 класів і фон) та регресія рамки (4 поправки).
+```
+```{python}
+def conv_bn(x, filters):
+    x = layers.Conv2D(filters, 3, padding="same", use_bias=False)(x)
+    return layers.ReLU()(layers.BatchNormalization()(x))
+
+
+def deepid_net(def_pooling=True, crop=96):
+    inp = keras.Input((crop, crop, 3))
+    x = layers.Rescaling(1 / 127.5, offset=-1)(inp)
+    for filters in (32, 64, 128, 256):  # conv1-conv4: crop -> crop / 16
+        x = layers.MaxPooling2D()(conv_bn(conv_bn(x, filters), filters))
+    conv5 = conv_bn(conv_bn(x, 256), 256)
+
+    fc = layers.Flatten()(layers.MaxPooling2D()(conv5))  # R-CNN branch: pool5, fc6, fc7
+    for _ in range(2):
+        fc = layers.Dropout(0.5)(layers.Dense(1024, activation="relu")(fc))
+
+    parts = layers.Concatenate()([layers.Conv2D(64, 3, padding="same")(conv5),
+                                  layers.Conv2D(64, 5, padding="same")(conv5)])
+    parts = layers.BatchNormalization()(parts)
+    if def_pooling:
+        pooled = DefPooling(name="def_pool")(parts)
+    else:
+        pooled = layers.MaxPooling2D(3, 2, padding="same")(parts)
+    part_fc = layers.Dropout(0.5)(layers.Dense(256, activation="relu")(layers.Flatten()(pooled)))
+
+    h = layers.Concatenate()([fc, part_fc])
+    cls = layers.Dense(NC + 1, activation="softmax", dtype="float32", name="cls")(h)
+    bbox = layers.Dense(4, kernel_initializer=keras.initializers.RandomNormal(stddev=0.001),
+                        dtype="float32", name="bbox")(h)
+    return keras.Model(inp, [cls, bbox], name="DeepID-Net" if def_pooling else "MaxPool-Net")
+
+
+deepid_net().summary(line_length=100)
+```
+
+```{=typst}
+= Training
+
+Як у R-CNN, кожен регіон з облямівкою контексту (7 пікселів із 96) афінним перетворенням відображається у квадрат фіксованого розміру. Позитиви — претенденти з IoU $>= 0.5$ з рамкою ground truth (а також самі рамки ground truth), негативи — претенденти з IoU в $[0.1, 0.5)$. Батч містить 256 регіонів з 8 зображень, 25% з них позитиви. Регіони випадково віддзеркалюються.
+
+Ціль регресії — поправки R-CNN $t_x = (x^* - x_a) / w_a$, $t_y = (y^* - y_a) / h_a$, $t_w = ln(w^* / w_a)$, $t_h = ln(h^* / h_a)$, поділені на $(0.1, 0.1, 0.2, 0.2)$. Функція втрат — крос-ентропія по 21 класу плюс функція Хубера для поправок, яка рахується лише для позитивів. Оптимізатор — SGD з моментом Нестерова і косинусним зменшенням кроку навчання.
+```
+```{python}
+BOX_STD = np.array([0.1, 0.1, 0.2, 0.2], np.float32)
+
+
+def warp(img, boxes, size, pad_fraction=7 / 96):
+    """Affine-warp each box (enlarged to keep a context border) to a size x size crop."""
+    out = np.empty((len(boxes), size, size, 3), np.uint8)
+    scale = 1 / (1 - 2 * pad_fraction)
+    for i, (x0, y0, x1, y1) in enumerate(boxes):
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        sx, sy = size / ((x1 - x0) * scale), size / ((y1 - y0) * scale)
+        m = np.array([[sx, 0, size / 2 - sx * cx], [0, sy, size / 2 - sy * cy]], np.float32)
+        out[i] = cv.warpAffine(img, m, (size, size), flags=cv.INTER_LINEAR,
+                               borderMode=cv.BORDER_CONSTANT, borderValue=(124, 116, 104))
+    return out
+
+
+def encode(gt, anchors):
+    aw, ah = anchors[:, 2] - anchors[:, 0], anchors[:, 3] - anchors[:, 1]
+    gw, gh = gt[:, 2] - gt[:, 0], gt[:, 3] - gt[:, 1]
+    t = np.stack([(gt[:, 0] + gw / 2 - anchors[:, 0] - aw / 2) / aw,
+                  (gt[:, 1] + gh / 2 - anchors[:, 1] - ah / 2) / ah,
+                  np.log(gw / aw), np.log(gh / ah)], 1)
+    return t / BOX_STD
+
+
+def decode(t, anchors):
+    t = t * BOX_STD
+    aw, ah = anchors[:, 2] - anchors[:, 0], anchors[:, 3] - anchors[:, 1]
+    cx, cy = anchors[:, 0] + aw / 2 + t[:, 0] * aw, anchors[:, 1] + ah / 2 + t[:, 1] * ah
+    w, h = aw * np.exp(np.minimum(t[:, 2], 4)), ah * np.exp(np.minimum(t[:, 3], 4))
+    return np.stack([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2], 1).clip(0, SIDE)
+
+
+def roi_targets(meta, props):
+    """Per image: candidate boxes (ground truth first), class (0 = background), matched ground truth."""
+    out = []
+    for m, p in zip(meta, props):
+        gt, labels = m["boxes"][~m["difficult"]], m["labels"][~m["difficult"]]
+        if not len(gt):
+            continue
+        boxes = np.vstack([gt, p])
+        iou = box_iou(boxes, gt)
+        best, arg = iou.max(1), iou.argmax(1)
+        bg = np.flatnonzero((best >= 0.1) & (best < 0.5))
+        out.append({"boxes": boxes, "gt": gt[arg], "label": np.where(best >= 0.5, labels[arg] + 1, 0),
+                    "fg": np.flatnonzero(best >= 0.5), "bg": bg if len(bg) else np.flatnonzero(best < 0.5)})
+    return out
+
+
+class RoiBatches(keras.utils.PyDataset):
+    """Random batches of warped regions: `images` images x `rois` regions, 25% foreground."""
+
+    def __init__(self, crop, steps, images=8, rois=32, **kwargs):
+        super().__init__(**kwargs)
+        pixels, meta = data["train"]
+        keep = [k for k, m in enumerate(meta) if (~m["difficult"]).any()]
+        self.pixels, self.sizes = pixels, [meta[k]["size"] for k in keep]
+        self.index, self.targets = keep, roi_targets([meta[k] for k in keep], [proposals["train"][k] for k in keep])
+        self.crop, self.steps, self.images, self.rois, self.n_fg = crop, steps, images, rois, rois // 4
+
+    def __len__(self):
+        return self.steps
+
+    def __getitem__(self, _):
+        rng = np.random.default_rng()
+        xs, labels, deltas = [], [], []
+        for i in rng.integers(len(self.targets), size=self.images):
+            t, (h, w) = self.targets[i], self.sizes[i]
+            fg = rng.choice(t["fg"], min(self.n_fg, len(t["fg"])), replace=False)
+            sel = np.r_[fg, rng.choice(t["bg"], self.rois - len(fg))]
+            xs.append(warp(np.asarray(self.pixels[self.index[i]][:h, :w]), t["boxes"][sel], self.crop))
+            labels.append(t["label"][sel])
+            deltas.append(encode(t["gt"][sel], t["boxes"][sel]))
+        x, y, d = np.concatenate(xs), np.concatenate(labels), np.concatenate(deltas)
+        flip = rng.random(len(x)) < 0.5
+        x[flip] = x[flip, :, ::-1]
+        d[flip, 0] *= -1
+        return x, (y, np.c_[d, y > 0].astype(np.float32))  # 5th column of the box target: foreground flag
+
+
+def box_loss(y_true, y_pred):
+    """Huber loss of the box deltas, only for foreground regions."""
+    diff = ops.abs(y_true[:, :4] - y_pred)
+    return ops.sum(ops.where(diff < 1, 0.5 * diff**2, diff - 0.5), axis=1) * y_true[:, 4]
+```
+
+```{=typst}
+= Detection & evaluation
+
+Для кожного зображення всі претенденти вирізаються та класифікуються. Для кожного класу оцінкою є ймовірність softmax, а рамка уточнюється регресором. Далі для кожного класу окремо виконується жадібний NMS з порогом IoU 0.3, як у R-CNN, і залишається не більше 100 детекцій на зображення.
+
+Оцінка — протокол Pascal VOC 2007. Детекція правильна, якщо її IoU з ще не знайденим об'єктом того ж класу $>= 0.5$. Повторні детекції вважаються хибними, а об'єкти _difficult_ ігноруються. AP — 11-точкова інтерпольована площа під кривою precision–recall, mAP — середнє по 20 класах.
+```
+```{python}
+def nms(boxes, scores, thr=0.3):
+    order, keep = np.argsort(-scores), []
+    while len(order):
+        keep.append(order[0])
+        order = order[1:][box_iou(boxes[order[:1]], boxes[order[1:]])[0] <= thr]
+    return np.array(keep, int)
+
+
+def crops_for(split, crop, k):
+    pixels, meta = data[split]
+    h, w = meta[k]["size"]
+    return warp(np.asarray(pixels[k][:h, :w]), proposals[split][k], crop)
+
+
+def per_class(probs, boxes):
+    dets = []
+    for c in range(NC):
+        idx = np.flatnonzero(probs[:, c + 1] > 0.01)
+        idx = idx[nms(boxes[idx], probs[idx, c + 1])]
+        dets += [(c, probs[i, c + 1], *boxes[i]) for i in idx]
+    dets = np.array(dets, np.float32).reshape(-1, 6)
+    return dets[np.argsort(-dets[:, 1])[:100]]
+
+
+def detect(models, split, crop, n=None):
+    """{name: detections per image} for the first n images of a split; rows: class, score, box."""
+    out = {name: [] for name in models}
+    n = n or len(data[split][1])
+    with mp.get_context("fork").Pool(8) as pool:
+        for start in range(0, n, 16):  # blocks of 16 images keep at most ~1 GB of crops in memory
+            ids = range(start, min(start + 16, n))
+            for k, crops in zip(ids, pool.map(partial(crops_for, split, crop), ids)):
+                props = proposals[split][k]
+                for name, model in models.items():
+                    probs, deltas = model.predict(crops, batch_size=512, verbose=0)
+                    out[name].append(per_class(probs, decode(deltas, props)))
+    return out
+
+
+def voc07_ap(dets, meta, cls):
+    records = sorted(((k, *d[1:]) for k, ds in enumerate(dets) for d in ds if d[0] == cls), key=lambda r: -r[1])
+    n_pos = sum(int(np.sum((m["labels"] == cls) & ~m["difficult"])) for m in meta)
+    used, tp = set(), []
+    for k, _, *box in records:
+        m = meta[k]
+        sel = np.flatnonzero(m["labels"] == cls)
+        iou = box_iou(np.array([box]), m["boxes"][sel])[0] if len(sel) else np.zeros(1)
+        j = sel[iou.argmax()] if iou.max() >= 0.5 else None
+        if j is not None and m["difficult"][j]:
+            continue  # matches to difficult objects are ignored
+        tp.append(j is not None and (k, j) not in used)
+        used.add((k, j))
+    tp = np.array(tp, bool)
+    recall = np.cumsum(tp) / n_pos
+    precision = np.cumsum(tp) / np.arange(1, len(tp) + 1)
+    return np.mean([precision[recall >= t].max() if (recall >= t).any() else 0 for t in np.linspace(0, 1, 11)])
+
+
+def average_precision(dets, split):
+    meta = data[split][1][: len(dets)]
+    return np.array([voc07_ap(dets, meta, c) for c in range(NC)])
+```
+
+```{=typst}
+= Hyperparameter tuning
+
+Мережа навчається з нуля, тому найважливіші параметри — тривалість навчання, розмір регіону та крок навчання. Кожну конфігурацію натреновано один раз, а mAP оцінено на перших 500 зображеннях VOC 2007 _val_, яке не перетинається ні з навчальною, ні з тестовою вибіркою. Тестова вибірка у виборі конфігурації не використовується.
+
+Ваги та результати кожного запуску зберігаються на диск (`lab-4-data/`), тому повторне виконання звіту нічого не перенавчає. Відсутні запуски тренуються лише зі змінною оточення `LAB4_TRAIN=1`.
+```
+```{python}
+TRAIN = os.environ.get("LAB4_TRAIN") == "1"
+N_VAL = 500
+
+TUNING = {  # run: (crop, steps, learning rate)
+    "A": (64, 2000, 0.01),
+    "B": (64, 2000, 0.03),
+    "C": (96, 2000, 0.01),
+    "D": (64, 6000, 0.01),
+    "E": (96, 6000, 0.01),
+    "F": (64, 12000, 0.01),
+    "G": (64, 48000, 0.01),
+    "F2": (64, 12000, 0.01),  # repeat of F: run-to-run noise
+}
+
+
+def train_run(run, def_pooling=True):
+    """Model and record (training time, history, val mAP) of one configuration.
+
+    Trained once, then loaded from lab-4-data/; training only happens with LAB4_TRAIN=1.
+    """
+    crop, steps, lr = TUNING[run]
+    name = f"{'deepid' if def_pooling else 'maxpool'}-{run}"
+    weights, record_file = DATA / f"{name}.weights.h5", DATA / f"{name}.json"
+    model = deepid_net(def_pooling, crop)
+    if weights.exists():
+        model.load_weights(weights)
+        record = json.loads(record_file.read_text())
+    elif TRAIN:
+        model.compile(
+            optimizer=keras.optimizers.SGD(keras.optimizers.schedules.CosineDecay(lr, steps),
+                                           momentum=0.9, nesterov=True, weight_decay=5e-4),
+            loss=["sparse_categorical_crossentropy", box_loss],
+            metrics=[["accuracy"], []],
+        )
+        start = time.time()
+        history = model.fit(RoiBatches(crop, steps // 10, workers=8), epochs=10, verbose=2).history
+        record = {"train_min": (time.time() - start) / 60, "history": history}
+        model.save_weights(weights)
+    else:
+        raise RuntimeError(f"{weights} is missing: render with LAB4_TRAIN=1 to train it")
+    if "val_map" not in record:
+        dets = detect({name: model}, "val", crop, N_VAL)[name]
+        record["val_map"] = float(average_precision(dets, "val").mean())
+    record_file.write_text(json.dumps(record))
+    return model, record
+
+
+rows = []
+for run, (crop, steps, lr) in TUNING.items():
+    _, record = train_run(run)
+    rows.append({"run": run, "crop, px": crop, "steps": steps, "lr": lr,
+                 "training, min": record["train_min"], "val mAP, %": 100 * record["val_map"]})
+tuning = pd.DataFrame(rows).set_index("run")
+```
+```{python}
+#| output: asis
+print(tuning.to_markdown(floatfmt=("", ".0f", ".0f", ".2f", ".1f", ".1f")))
+best = tuning["val mAP, %"].idxmax()
+print(f"\n\nBest configuration: run {best}.")
+```
+
+```{=typst}
+== Def-pooling vs max-pooling
+
+Щоб оцінити внесок def-pooling, конфігурації F і найкращу повторено для мережі, у якій def-pooling замінено звичайним max-pooling. Решта архітектури та навчання однакові. Нижче наведено mAP на _val_.
+```
+```{python}
+#| output: asis
+rows = []
+for run in dict.fromkeys(["F", best]):
+    for def_pooling in (True, False):
+        _, record = train_run(run, def_pooling)
+        rows.append({"run": f"{run} ({TUNING[run][1]} steps)", "pooling": "def" if def_pooling else "max",
+                     "val mAP, %": 100 * record["val_map"]})
+print(pd.DataFrame(rows).pivot(index="run", columns="pooling", values="val mAP, %").to_markdown(floatfmt=".1f"))
+```
+
+```{=typst}
+= Results
+
+Найкраща конфігурація з def-pooling і її варіант з max-pooling оцінені на повній тестовій вибірці VOC 2007 (4 952 зображення).
+```
+```{python}
+models = {"def-pooling": train_run(best, True), "max-pooling": train_run(best, False)}
+
+path = DATA / f"test-detections-{best}.npz"
+if not path.exists():
+    dets = detect({name: model for name, (model, _) in models.items()}, "test", TUNING[best][0])
+    np.savez(path, **{name: np.array(d, dtype=object) for name, d in dets.items()})
+detections = {name: list(d) for name, d in np.load(path, allow_pickle=True).items()}
+ap = {name: average_precision(d, "test") for name, d in detections.items()}
+
+_, axs = plt.subplots(1, 2, figsize=(7, 2.4), constrained_layout=True)
+for name, (_, record) in models.items():
+    axs[0].plot(record["history"]["cls_loss"], label=name)
+    axs[1].plot(record["history"]["bbox_loss"], label=name)
+axs[0].set(title="classification loss", xlabel="epoch")
+axs[1].set(title="box regression loss", xlabel="epoch")
+axs[0].legend(fontsize=7)
+plt.show()
+```
+```{python}
+#| output: asis
+per_cls = pd.DataFrame({name: 100 * a for name, a in ap.items()}, index=CLASSES).T
+per_cls.insert(0, "mAP", per_cls.mean(axis=1))
+print(per_cls.iloc[:, :11].to_markdown(floatfmt=".1f"), "\n")
+print(per_cls.iloc[:, 11:].to_markdown(floatfmt=".1f"))
+```
+
+```{=typst}
+== Learned deformation penalties
+
+Штрафи деформації 16 частин навченої мережі (5×5 зсувів, темніше — дешевше). Частини з вузьким мінімумом поводяться як жорстко закріплені фрагменти шаблону. Частини з широким «дном» можуть вільно зміщуватися, як при max-pooling.
+```
+```{python}
+pool = models["def-pooling"][0].get_layer("def_pool")
+penalty = ops.convert_to_numpy(pool.penalty()).T.reshape(-1, 5, 5)
+q = ops.convert_to_numpy(ops.softplus(pool.quadratic)).sum(0)
+picked = np.argsort(q)[np.linspace(0, len(q) - 1, 16).astype(int)]
+_, axs = plt.subplots(2, 8, figsize=(7, 2), constrained_layout=True)
+for ax, c in zip(axs.flat, picked):
+    ax.imshow(penalty[c], cmap="viridis")
+    ax.set_title(f"part {c}", fontsize=6)
+    ax.axis("off")
+plt.show()
+```
+
+```{=typst}
+== Detection examples
+
+Детекції DeepID-Net з оцінкою $> 0.7$ (не більше 5 на зображення).
+```
+```{python}
+final = detections["def-pooling"]
+shown = [k for k, d in enumerate(final) if (d[:, 1] > 0.7).any()][:12]
+_, axs = plt.subplots(3, 4, figsize=(7, 5.4), constrained_layout=True)
+for ax, k in zip(axs.flat, shown):
+    h, w = test_meta[k]["size"]
+    ax.imshow(test_pixels[k][:h, :w])
+    for c, s, *box in final[k][final[k][:, 1] > 0.7][:5]:
+        draw_box(ax, box, plt.cm.tab20(int(c)), f"{CLASSES[int(c)]} {s:.2f}")
+    ax.axis("off")
+plt.show()
+```
+
+```{=typst}
+= Висновки
+
+У роботі реалізовано детектор об'єктів DeepID-Net за схемою R-CNN: власний selective search, згорткова мережа з шаром def-pooling (Keras, backend PyTorch), регресія рамок, NMS та оцінка за протоколом Pascal VOC 2007. Мережу навчено з нуля, без попередньо натренованих ваг.
+
+- *Selective search* дає в середньому 1 616 претендентів на зображення і знаходить 94.7% об'єктів тестової вибірки з IoU $>= 0.5$ (середнє найкраще перекриття 0.78). Частина пропущених об'єктів — дрібні об'єкти, які на зображеннях 256 пікселів займають лише кілька пікселів.
+- *Налаштування*. Головний параметр — тривалість навчання: mAP на _val_ зростає з 7.5% (2 000 кроків) до 21.6% (6 000), 30.1% (12 000) і 49.0% (48 000 кроків, 84 хв). Регіони 96×96 замість 64×64 за тієї самої кількості кроків не покращують результат (21.7% проти 21.6%), але вдвічі сповільнюють навчання. Крок навчання 0.03 гірший за 0.01. Повторне навчання конфігурації F дало 33.0% замість 30.1%, тобто різниця близько 3 пунктів mAP — це шум між однаковими запусками.
+- *Результат*. Найкраща конфігурація (G) досягає *52.8% mAP* на повній тестовій вибірці VOC 2007. Найкраще розпізнаються автомобілі, літаки, автобуси та коні (67–70% AP), найгірше — пляшки, вазони та стільці (19–27% AP): це дрібні об'єкти, для яких регіон 64×64 вирізається з кількох пікселів зображення.
+- *Def-pooling проти max-pooling*. У цій постановці def-pooling не дав вимірного виграшу: 49.0% проти 49.4% на _val_ і 52.8% проти 51.7% на тесті, при 12 000 кроків — 30.1% проти 31.5%. Усі різниці в межах шуму між запусками. Причину видно з навчених штрафів: квадратичні коефіцієнти майже не змінилися від початкового значення (≈ 0.16 для всіх частин), лінійні залишилися близькими до нуля. Тобто частини навчилися однакового слабкого «тяжіння» до центру, і шар поводиться майже як max-pooling. Для регіонів 64×64 карта conv5 має розмір лише 4×4, і зсув $plus.minus 2$ уже охоплює майже всю карту, тож простору для моделювання деформацій мало. В оригінальній роботі виграш від def-pooling отримано на значно більшій мережі, попередньо навченій на ImageNet, з регіонами 227×227.
+- Повний конвеєр DeepID-Net містить також попереднє навчання на рамках об'єктів ImageNet, моделювання контексту та усереднення моделей. Їх не відтворено, тому результат не порівнюється напряму з оригінальною роботою.
+```
