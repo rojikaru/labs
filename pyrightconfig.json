@@ -1,4 +1,14 @@
 {
   "venvPath": "/home/rojikaru/.venvs",
-  "venv": "quarto"
+  "venv": "quarto",
+  "executionEnvironments": [
+    {
+      "root": "grade-4.1/llm/lab-10",
+      "pythonVersion": "3.12",
+      "extraPaths": [
+        "grade-4.1/llm/lab-10/src",
+        "grade-4.1/llm/lab-10/.venv/lib/python3.12/site-packages"
+      ]
+    }
+  ]
 }

@@ -1,0 +1,362 @@
+{
+  "train_m3_noul": {
+    "base_model": "jhu-clsp/mmBERT-small",
+    "kinds": [
+      "noul"
+    ],
+    "history": [
+      {
+        "epoch": 1,
+        "train_loss": 0.5059013961628079,
+        "val_loss": 0.4084484236687422
+      }
+    ],
+    "best_epoch": 1,
+    "best_val_loss": 0.4084484236687422,
+    "train_rows": {
+      "boolq": 7600,
+      "mnli": 7600
+    },
+    "batch_size": 8,
+    "accumulate": 2,
+    "freeze_embeddings": false,
+    "wall_time_s": 280.6,
+    "peak_vram_gb": 3.887,
+    "gpu": "NVIDIA GeForce RTX 5060 Laptop GPU",
+    "parameters_m": 140.5
+  },
+  "m3_noul": {
+    "temperature": {
+      "noul": 1.1
+    },
+    "tests": {
+      "boolq_val": {
+        "type": "noul",
+        "rows": 2000,
+        "ece_before": 0.030329538941383342,
+        "ece_after": 0.02812830832600593,
+        "accuracy": 0.7605,
+        "f1": 0.8193134666163712,
+        "majority": 0.6265
+      },
+      "amazon_polarity": {
+        "type": "noul",
+        "rows": 2000,
+        "ece_before": 0.12824651741981505,
+        "ece_after": 0.14306981936097146,
+        "accuracy": 0.842,
+        "f1": 0.8392675483214649,
+        "majority": 0.5115
+      }
+    },
+    "ece_by_type": {
+      "noul": {
+        "T = 1": 0.06678767639398576,
+        "T = 1.1": 0.0810852239727974
+      }
+    }
+  },
+  "train_main": {
+    "base_model": "jhu-clsp/mmBERT-small",
+    "kinds": [
+      "noul",
+      "choice",
+      "score"
+    ],
+    "history": [
+      {
+        "epoch": 1,
+        "train_loss": 0.7684524538266031,
+        "val_loss": 0.6381836478710174
+      },
+      {
+        "epoch": 2,
+        "train_loss": 0.4610105064040736,
+        "val_loss": 0.5958061822652817
+      }
+    ],
+    "best_epoch": 2,
+    "best_val_loss": 0.5958061822652817,
+    "train_rows": {
+      "boolq": 7600,
+      "mnli": 7600,
+      "ag_news": 7600,
+      "race": 7600,
+      "yelp": 7600
+    },
+    "batch_size": 16,
+    "accumulate": 1,
+    "freeze_embeddings": false,
+    "wall_time_s": 1458.5,
+    "peak_vram_gb": 5.017,
+    "gpu": "NVIDIA GeForce RTX 5060 Laptop GPU",
+    "parameters_m": 140.5
+  },
+  "results": {
+    "temperature": {
+      "noul": 1.45,
+      "choice": 1.45,
+      "score": 1.25
+    },
+    "tests": {
+      "boolq_val": {
+        "type": "noul",
+        "rows": 2000,
+        "ece_before": 0.05343335711956025,
+        "ece_after": 0.018171902179718,
+        "accuracy": 0.7765,
+        "f1": 0.8282750672301191,
+        "majority": 0.6265
+      },
+      "amazon_polarity": {
+        "type": "noul",
+        "rows": 2000,
+        "ece_before": 0.05146219718456267,
+        "ece_after": 0.12225973740220068,
+        "accuracy": 0.9115,
+        "f1": 0.9061007957559681,
+        "majority": 0.5115
+      },
+      "banking77": {
+        "type": "choice",
+        "rows": 2000,
+        "ece_before": 0.13959388246387242,
+        "ece_after": 0.23478814242035148,
+        "accuracy": 0.671,
+        "majority": 0.213,
+        "zero_shot": 0.703
+      },
+      "belebele_uk": {
+        "type": "choice",
+        "rows": 900,
+        "ece_before": 0.18747252550390034,
+        "ece_after": 0.1049417351351844,
+        "accuracy": 0.4033333333333333,
+        "majority": 0.2788888888888889,
+        "zero_shot": 0.3433333333333333
+      },
+      "sib200_uk": {
+        "type": "choice",
+        "rows": 204,
+        "ece_before": 0.09192512461952133,
+        "ece_after": 0.20040516051299434,
+        "accuracy": 0.7107843137254902,
+        "majority": 0.25,
+        "zero_shot": 0.46568627450980393
+      },
+      "yelp_test": {
+        "type": "score",
+        "rows": 2000,
+        "ece_before": 0.06671535901725292,
+        "ece_after": 0.021595428459346297,
+        "accuracy": 0.6085,
+        "majority": 0.2205
+      }
+    },
+    "ece_by_type": {
+      "noul": {
+        "T = 1": 0.01324957230687139,
+        "T = 1.45": 0.0656285723000765
+      },
+      "choice": {
+        "T = 1": 0.051675348451418676,
+        "T = 1.45": 0.13312151270544095
+      },
+      "score": {
+        "T = 1": 0.06671535901725292,
+        "T = 1.25": 0.021595428459346297
+      }
+    }
+  },
+  "service": {
+    "latency_ms_cuda": 11.83,
+    "response_cuda": {
+      "model": "decide-mmbert-small-283ba19",
+      "answers": {
+        "department": {
+          "type": "choice",
+          "choice": "billing",
+          "probabilities": {
+            "billing": 0.351,
+            "technical": 0.3383,
+            "other": 0.2009,
+            "sales": 0.1099
+          },
+          "confidence": 0.1346
+        },
+        "frustration": {
+          "type": "score",
+          "score": 1.4036,
+          "confidence": 0.2874,
+          "probabilities": {
+            "0": 0.1213,
+            "1": 0.3538,
+            "2": 0.5249
+          },
+          "legend": {
+            "0": "Спокійний, нейтральний тон",
+            "1": "Помірне невдоволення",
+            "2": "Сильне роздратування або погрози піти"
+          }
+        },
+        "wants_refund": {
+          "type": "noul",
+          "noul": 0.6599
+        }
+      },
+      "usage": {
+        "input_tokens": 289,
+        "output_tokens": 0
+      }
+    },
+    "latency_ms_cpu": 151.89,
+    "response_cpu": {
+      "model": "decide-mmbert-small-283ba19",
+      "answers": {
+        "department": {
+          "type": "choice",
+          "choice": "billing",
+          "probabilities": {
+            "billing": 0.3483,
+            "technical": 0.3395,
+            "other": 0.2019,
+            "sales": 0.1103
+          },
+          "confidence": 0.131
+        },
+        "frustration": {
+          "type": "score",
+          "score": 1.4089,
+          "confidence": 0.2938,
+          "probabilities": {
+            "0": 0.1203,
+            "1": 0.3505,
+            "2": 0.5292
+          },
+          "legend": {
+            "0": "Спокійний, нейтральний тон",
+            "1": "Помірне невдоволення",
+            "2": "Сильне роздратування або погрози піти"
+          }
+        },
+        "wants_refund": {
+          "type": "noul",
+          "noul": 0.6616
+        }
+      },
+      "usage": {
+        "input_tokens": 289,
+        "output_tokens": 0
+      }
+    }
+  },
+  "train_base": {
+    "base_model": "jhu-clsp/mmBERT-base",
+    "kinds": [
+      "noul",
+      "choice",
+      "score"
+    ],
+    "history": [
+      {
+        "epoch": 1,
+        "train_loss": 0.6946228854647641,
+        "val_loss": 0.5193897306481376
+      },
+      {
+        "epoch": 2,
+        "train_loss": 0.3598962598840222,
+        "val_loss": 0.5324859167500399
+      }
+    ],
+    "best_epoch": 1,
+    "best_val_loss": 0.5193897306481376,
+    "train_rows": {
+      "boolq": 7600,
+      "mnli": 7600,
+      "ag_news": 7600,
+      "race": 7600,
+      "yelp": 7600
+    },
+    "batch_size": 4,
+    "accumulate": 4,
+    "freeze_embeddings": true,
+    "wall_time_s": 1499.8,
+    "peak_vram_gb": 3.952,
+    "gpu": "NVIDIA GeForce RTX 5060 Laptop GPU",
+    "parameters_m": 306.9
+  },
+  "results_base": {
+    "temperature": {
+      "noul": 1.1,
+      "choice": 0.9,
+      "score": 0.95
+    },
+    "tests": {
+      "boolq_val": {
+        "type": "noul",
+        "rows": 2000,
+        "ece_before": 0.013303644686937365,
+        "ece_after": 0.025132545232772825,
+        "accuracy": 0.787,
+        "f1": 0.8326787117046347,
+        "majority": 0.6265
+      },
+      "amazon_polarity": {
+        "type": "noul",
+        "rows": 2000,
+        "ece_before": 0.12659472966194155,
+        "ece_after": 0.1451541864275932,
+        "accuracy": 0.929,
+        "f1": 0.9259645464025026,
+        "majority": 0.5115
+      },
+      "banking77": {
+        "type": "choice",
+        "rows": 2000,
+        "ece_before": 0.13389015067368745,
+        "ece_after": 0.12172490068525076,
+        "accuracy": 0.533,
+        "majority": 0.213
+      },
+      "belebele_uk": {
+        "type": "choice",
+        "rows": 900,
+        "ece_before": 0.04183208962281545,
+        "ece_after": 0.05276391651895312,
+        "accuracy": 0.5588888888888889,
+        "majority": 0.2788888888888889
+      },
+      "sib200_uk": {
+        "type": "choice",
+        "rows": 204,
+        "ece_before": 0.13262954880209527,
+        "ece_after": 0.09713103972813661,
+        "accuracy": 0.7598039215686274,
+        "majority": 0.25
+      },
+      "yelp_test": {
+        "type": "score",
+        "rows": 2000,
+        "ece_before": 0.028618522211909282,
+        "ece_after": 0.027593365237116797,
+        "accuracy": 0.638,
+        "majority": 0.2205
+      }
+    },
+    "ece_by_type": {
+      "noul": {
+        "T = 1": 0.0670145404189825,
+        "T = 1.1": 0.0839090914130211
+      },
+      "choice": {
+        "T = 1": 0.09195450257951604,
+        "T = 0.9": 0.07565822612167784
+      },
+      "score": {
+        "T = 1": 0.028618522211909282,
+        "T = 0.95": 0.027593365237116797
+      }
+    }
+  }
+}
