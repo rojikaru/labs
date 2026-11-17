@@ -1,0 +1,43 @@
+[project]
+name = "decide"
+version = "0.1.0"
+description = "Lab 10: a small Jev-style decision model (encoder, no text generation)"
+requires-python = "==3.12.*"
+dependencies = [
+    "torch>=2.7",
+    "transformers>=4.48",
+    "datasets>=3.0",
+    "numpy",
+    "matplotlib",
+    "fastapi",
+    "uvicorn",
+    "pydantic>=2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+    "radon",
+    "complexipy",
+    "ipykernel",
+    "httpx>=0.28.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.8,<0.14"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
