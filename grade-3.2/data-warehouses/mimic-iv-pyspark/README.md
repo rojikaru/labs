@@ -11,10 +11,10 @@ The MIMIC-IV dataset is a large, publicly available dataset of de-identified hea
 - Python 3.14 or higher
 - Apache Spark (via [PySpark](https://pypi.org/project/pyspark/) ≥ 4.1.1)
 - Java 17 (see [Java Installation](#java-installation) below)
-- [uv](https://docs.astral.sh/uv/) — fast Python package and project manager
+- [uv](https://docs.astral.sh/uv/) - fast Python package and project manager
 - Key Python dependencies (managed by `uv`):
-  - `pyspark` — distributed data processing
-  - `polars` — local data manipulation
+  - `pyspark` - distributed data processing
+  - `polars` - local data manipulation
 
 ## Installation
 

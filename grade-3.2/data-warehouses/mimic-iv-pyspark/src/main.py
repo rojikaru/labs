@@ -34,7 +34,7 @@ def main():
         # Increase the fraction of heap used for execution/storage (default 0.6).
         .config("spark.memory.fraction", "0.8")
         # Of that fraction, reserve less for cached data so execution tasks have
-        # more room to work (default 0.5 — halved here to reduce spill pressure).
+        # more room to work (default 0.5 - halved here to reduce spill pressure).
         .config("spark.memory.storageFraction", "0.3")
         # Limit the max size of a single collect result to avoid driver OOM.
         .config("spark.driver.maxResultSize", "4g")
