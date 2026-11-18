@@ -106,9 +106,9 @@ Copy `.env.example` to `.env` and adjust it. Every variable is optional:
 | --- | --- | --- |
 | `LLM_PROVIDER` | `ollama` | `ollama`, `docker` (Docker Model Runner) or `openai` |
 | `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` | provider preset | override the preset of `LLM_PROVIDER` |
-| `OPENAI_API_KEY` | — | key for the `openai` provider when `LLM_API_KEY` is unset |
+| `OPENAI_API_KEY` | - | key for the `openai` provider when `LLM_API_KEY` is unset |
 | `TORCH_DEVICE` | `cuda` if available | device for the embedding models |
-| `CHROMA_SERVER_HOST`, `CHROMA_AUTH_TOKEN_TRANSPORT_HEADER`, `CHROMA_CLIENT_AUTH_PROVIDER`, `CHROMA_CLIENT_AUTH_CREDENTIALS` | — | hosted Chroma; otherwise a local `./chroma` directory |
+| `CHROMA_SERVER_HOST`, `CHROMA_AUTH_TOKEN_TRANSPORT_HEADER`, `CHROMA_CLIENT_AUTH_PROVIDER`, `CHROMA_CLIENT_AUTH_CREDENTIALS` | - | hosted Chroma; otherwise a local `./chroma` directory |
 
 Provider presets:
 
