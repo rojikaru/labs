@@ -22,7 +22,9 @@ class ScoreQuestion(BaseModel):
     criteria: Annotated[list[str], Field(min_length=2, max_length=10)]
 
 
-Question = Annotated[NoulQuestion | ChoiceQuestion | ScoreQuestion, Field(discriminator="type")]
+Question = Annotated[
+    NoulQuestion | ChoiceQuestion | ScoreQuestion, Field(discriminator="type")
+]
 
 
 class Request(BaseModel):

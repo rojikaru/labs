@@ -19,7 +19,9 @@ def stack_logits(rows: list[torch.Tensor]) -> torch.Tensor:
 
 
 def fit_temperature(logits: torch.Tensor, targets: torch.Tensor, kind: str) -> float:
-    losses = [float(loss_for(logits / value, targets, kind)) for value in TEMPERATURE_GRID]
+    losses = [
+        float(loss_for(logits / value, targets, kind)) for value in TEMPERATURE_GRID
+    ]
     return float(TEMPERATURE_GRID[int(np.argmin(losses))])
 
 
@@ -44,11 +46,15 @@ def bin_statistics(confidence: np.ndarray, correct: np.ndarray, bins: int = BINS
 def expected_calibration_error(
     confidence: np.ndarray, correct: np.ndarray, bins: int = BINS
 ) -> float:
-    counts, mean_conf, accuracy = bin_statistics(np.asarray(confidence), np.asarray(correct), bins)
+    counts, mean_conf, accuracy = bin_statistics(
+        np.asarray(confidence), np.asarray(correct), bins
+    )
     return float(np.sum(counts / counts.sum() * np.abs(accuracy - mean_conf)))
 
 
-def reliability_plot(curves: dict[str, tuple[np.ndarray, np.ndarray]], title: str, path) -> None:
+def reliability_plot(
+    curves: dict[str, tuple[np.ndarray, np.ndarray]], title: str, path
+) -> None:
     figure = Figure(figsize=(5, 5))
     axis = figure.add_subplot()
     axis.plot([0, 1], [0, 1], linestyle="--", color="grey", label="perfect")
@@ -56,8 +62,15 @@ def reliability_plot(curves: dict[str, tuple[np.ndarray, np.ndarray]], title: st
         counts, mean_conf, accuracy = bin_statistics(confidence, correct)
         filled = counts > 0
         ece = expected_calibration_error(confidence, correct)
-        axis.plot(mean_conf[filled], accuracy[filled], marker="o", label=f"{label} (ECE {ece:.3f})")
-    axis.set(xlabel="confidence", ylabel="accuracy", title=title, xlim=(0, 1), ylim=(0, 1))
+        axis.plot(
+            mean_conf[filled],
+            accuracy[filled],
+            marker="o",
+            label=f"{label} (ECE {ece:.3f})",
+        )
+    axis.set(
+        xlabel="confidence", ylabel="accuracy", title=title, xlim=(0, 1), ylim=(0, 1)
+    )
     axis.legend(loc="upper left")
     figure.tight_layout()
     figure.savefig(path, dpi=120)

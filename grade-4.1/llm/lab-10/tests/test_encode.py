@@ -39,4 +39,6 @@ def test_collate_masks(tokenizer):
     assert tensors["option_mask"].tolist() == [[True, True], [False, False]]
     assert tensors["span_mask"].sum(-1).tolist() == [[1.0, 1.0], [0.0, 0.0]]
     assert int(tensors["attention_mask"][0].sum()) == len(batch[0].input_ids)
-    assert torch.all(tensors["input_ids"][0, len(batch[0].input_ids) :] == tokenizer.pad_token_id)
+    assert torch.all(
+        tensors["input_ids"][0, len(batch[0].input_ids) :] == tokenizer.pad_token_id
+    )

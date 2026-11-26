@@ -35,7 +35,9 @@ def predict(model, tokenizer, examples, device: str, batch_size: int = 32):
     rows = []
     for start in range(0, len(examples), batch_size):
         chunk = examples[start : start + batch_size]
-        encoded = [encode(tokenizer, e.state, e.instructions, e.option_texts) for e in chunk]
+        encoded = [
+            encode(tokenizer, e.state, e.instructions, e.option_texts) for e in chunk
+        ]
         rows += infer_logits(model, encoded, tokenizer.pad_token_id, device)
     return stack_logits(rows), torch.tensor([e.target for e in examples])
 
@@ -45,7 +47,9 @@ def fit_temperatures(model, tokenizer, kinds, device: str) -> dict[str, float]:
     fitted = {}
     for kind in kinds:
         examples = [e for name in SOURCES_BY_KIND[kind] for e in val[name]]
-        fitted[kind] = fit_temperature(*predict(model, tokenizer, examples, device), kind)
+        fitted[kind] = fit_temperature(
+            *predict(model, tokenizer, examples, device), kind
+        )
         model.temperature[TYPES.index(kind)] = fitted[kind]
     return fitted
 
@@ -75,7 +79,9 @@ def pool(curves: dict, names: list[str], label: str) -> tuple[np.ndarray, np.nda
     return confidence, correct
 
 
-def pooled_reliability(results: dict, curves: dict, temperatures: dict, suffix: str) -> dict:
+def pooled_reliability(
+    results: dict, curves: dict, temperatures: dict, suffix: str
+) -> dict:
     by_type = {}
     for kind, fitted in temperatures.items():
         names = [name for name, row in results.items() if row["type"] == kind]
@@ -88,7 +94,9 @@ def pooled_reliability(results: dict, curves: dict, temperatures: dict, suffix: 
             f"{kind}: held-out test sets",
             f"reports/reliability_{kind}{suffix}.png",
         )
-        by_type[kind] = {label: expected_calibration_error(*pair) for label, pair in merged.items()}
+        by_type[kind] = {
+            label: expected_calibration_error(*pair) for label, pair in merged.items()
+        }
     return by_type
 
 
@@ -99,7 +107,9 @@ def zero_shot_hit(classifier, example) -> bool:
 
 
 def zero_shot(tests: dict, device: str, cap: int = 1000) -> dict[str, float]:
-    classifier = pipeline("zero-shot-classification", model=ZERO_SHOT_MODEL, device=device)
+    classifier = pipeline(
+        "zero-shot-classification", model=ZERO_SHOT_MODEL, device=device
+    )
     accuracy = {}
     for name, examples in tests.items():
         if examples[0].kind != "choice":
@@ -149,7 +159,9 @@ def main() -> None:
     for name, examples in tests.items():
         logits, targets = predict(model, tokenizer, examples, "cuda")
         kind = examples[0].kind
-        results[name], curves[name] = score_set(logits, targets, kind, temperatures[kind])
+        results[name], curves[name] = score_set(
+            logits, targets, kind, temperatures[kind]
+        )
         results[name]["majority"] = majority_share(examples)
     suffix = "" if args.section == "results" else f"_{args.section}"
     by_type = pooled_reliability(results, curves, temperatures, suffix)
