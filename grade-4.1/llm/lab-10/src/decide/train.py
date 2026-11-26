@@ -51,8 +51,12 @@ def fits(tokenizer, example: Example) -> bool:
     return True
 
 
-def keep_fitting(tokenizer, groups: dict[str, list[Example]]) -> dict[str, list[Example]]:
-    return {name: [e for e in rows if fits(tokenizer, e)] for name, rows in groups.items()}
+def keep_fitting(
+    tokenizer, groups: dict[str, list[Example]]
+) -> dict[str, list[Example]]:
+    return {
+        name: [e for e in rows if fits(tokenizer, e)] for name, rows in groups.items()
+    }
 
 
 def make_batches(groups: dict[str, list[Example]], size: int, rng: random.Random):
@@ -68,8 +72,12 @@ def make_batches(groups: dict[str, list[Example]], size: int, rng: random.Random
 
 
 def batch_loss(model, tokenizer, batch: list[Example]) -> torch.Tensor:
-    encoded = [encode(tokenizer, e.state, e.instructions, e.option_texts) for e in batch]
-    tensors = {k: v.to("cuda") for k, v in collate(encoded, tokenizer.pad_token_id).items()}
+    encoded = [
+        encode(tokenizer, e.state, e.instructions, e.option_texts) for e in batch
+    ]
+    tensors = {
+        k: v.to("cuda") for k, v in collate(encoded, tokenizer.pad_token_id).items()
+    }
     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
         noul, options = model(**tensors)
     kind = batch[0].kind

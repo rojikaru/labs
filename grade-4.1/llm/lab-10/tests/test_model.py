@@ -27,21 +27,29 @@ def test_option_head_is_equivariant(toy_model):
     permutation = torch.tensor([2, 0, 3, 1])
     with torch.no_grad():
         base = option_logits(toy_model.option_head, hidden, span_mask, option_mask)
-        moved = option_logits(toy_model.option_head, hidden, span_mask[:, permutation], option_mask)
+        moved = option_logits(
+            toy_model.option_head, hidden, span_mask[:, permutation], option_mask
+        )
     probs, moved_probs = torch.softmax(base, -1), torch.softmax(moved, -1)
     assert torch.allclose(moved_probs, probs[:, permutation], atol=1e-6)
 
 
 def test_temperature_one_is_identity_and_larger_moves_to_uniform():
     logits = torch.tensor([[2.0, 0.5, -1.0]])
-    assert torch.allclose(to_probabilities(logits, "choice", 1.0), torch.softmax(logits, -1))
-    assert torch.allclose(to_probabilities(logits[0, 0], "noul", 1.0), torch.sigmoid(logits[0, 0]))
+    assert torch.allclose(
+        to_probabilities(logits, "choice", 1.0), torch.softmax(logits, -1)
+    )
+    assert torch.allclose(
+        to_probabilities(logits[0, 0], "noul", 1.0), torch.sigmoid(logits[0, 0])
+    )
     uniform = torch.full((1, 3), 1 / 3)
     distances = [
-        (to_probabilities(logits, "choice", t) - uniform).abs().sum() for t in (1.0, 2.0, 5.0)
+        (to_probabilities(logits, "choice", t) - uniform).abs().sum()
+        for t in (1.0, 2.0, 5.0)
     ]
     assert distances[0] > distances[1] > distances[2]
     noul = [
-        abs(float(to_probabilities(torch.tensor(3.0), "noul", t)) - 0.5) for t in (1.0, 2.0, 5.0)
+        abs(float(to_probabilities(torch.tensor(3.0), "noul", t)) - 0.5)
+        for t in (1.0, 2.0, 5.0)
     ]
     assert noul[0] > noul[1] > noul[2]

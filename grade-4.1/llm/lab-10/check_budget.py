@@ -46,7 +46,9 @@ def sloc(path: Path) -> int:
 def worst_functions(path: Path) -> tuple[int, int]:
     text = path.read_text(encoding="utf-8")
     cyclomatic = [b.complexity for b in cc_visit(text) if isinstance(b, Function)]
-    cognitive = [f.complexity for f in file_complexity(str(path), no_ignore=True).functions]
+    cognitive = [
+        f.complexity for f in file_complexity(str(path), no_ignore=True).functions
+    ]
     return max(cyclomatic, default=0), max(cognitive, default=0)
 
 
@@ -69,12 +71,19 @@ def ruff_violations(folders: list[Path]) -> list[str]:
     cmd += ["--select", RUFF_RULES, "--output-format", "json"]
     for setting in RUFF_LIMITS:
         cmd += ["--config", setting]
-    result = subprocess.run(cmd + [str(f) for f in folders], capture_output=True, text=True)
+    result = subprocess.run(
+        cmd + [str(f) for f in folders], capture_output=True, text=True
+    )
     found = json.loads(result.stdout or "[]")
-    return [f"{v['filename']}:{v['location']['row']} {v['code']} {v['message']}" for v in found]
+    return [
+        f"{v['filename']}:{v['location']['row']} {v['code']} {v['message']}"
+        for v in found
+    ]
 
 
-def report(rows: list[tuple[Path, int, int, int]], src_total: int, test_total: int) -> None:
+def report(
+    rows: list[tuple[Path, int, int, int]], src_total: int, test_total: int
+) -> None:
     print(f"{'file':48} {'SLOC':>5} {'max CC':>7} {'max cog':>8}")
     for path, lines, cyc, cog in rows:
         print(f"{str(path):48} {lines:5} {cyc:7} {cog:8}")
@@ -90,7 +99,9 @@ def check(src: Path, tests: Path) -> list[str]:
     problems = [message for row in rows for message in file_problems(*row)]
     problems += over_limit("src total SLOC", src_total, "src_sloc_total")
     problems += over_limit("tests total SLOC", test_total, "tests_sloc_total")
-    problems += [f"{nb}: notebooks are not allowed in src" for nb in src.rglob("*.ipynb")]
+    problems += [
+        f"{nb}: notebooks are not allowed in src" for nb in src.rglob("*.ipynb")
+    ]
     return problems + ruff_violations([d for d in (src, tests) if d.exists()])
 
 

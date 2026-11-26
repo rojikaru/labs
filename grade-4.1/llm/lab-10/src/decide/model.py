@@ -13,7 +13,10 @@ def noul_logits(head: nn.Linear, hidden: torch.Tensor) -> torch.Tensor:
 
 
 def option_logits(
-    head: nn.Linear, hidden: torch.Tensor, span_mask: torch.Tensor, option_mask: torch.Tensor
+    head: nn.Linear,
+    hidden: torch.Tensor,
+    span_mask: torch.Tensor,
+    option_mask: torch.Tensor,
 ) -> torch.Tensor:
     counts = span_mask.sum(-1, keepdim=True).clamp(min=1.0)
     pooled = span_mask.to(hidden.dtype) @ hidden / counts.to(hidden.dtype)
@@ -21,7 +24,9 @@ def option_logits(
     return logits.masked_fill(~option_mask, float("-inf"))
 
 
-def to_probabilities(logits: torch.Tensor, kind: str, temperature: float = 1.0) -> torch.Tensor:
+def to_probabilities(
+    logits: torch.Tensor, kind: str, temperature: float = 1.0
+) -> torch.Tensor:
     scaled = logits.float() / temperature
     return torch.sigmoid(scaled) if kind == "noul" else torch.softmax(scaled, dim=-1)
 
@@ -46,7 +51,9 @@ class DecisionModel(nn.Module):
         self.register_buffer("temperature", torch.ones(len(TYPES)))
 
     def forward(self, input_ids, attention_mask, span_mask, option_mask):
-        hidden = self.encoder(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
+        hidden = self.encoder(
+            input_ids=input_ids, attention_mask=attention_mask
+        ).last_hidden_state
         options = option_logits(self.option_head, hidden, span_mask, option_mask)
         return noul_logits(self.noul_head, hidden), options
 

@@ -9,7 +9,13 @@ from datasets import Dataset, load_dataset
 SEED = 13
 TRAIN_CAP, TEST_CAP, VAL_SHARE = 8000, 2000, 0.05
 LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-YELP_LEVELS = ["very dissatisfied", "dissatisfied", "neutral", "satisfied", "very satisfied"]
+YELP_LEVELS = [
+    "very dissatisfied",
+    "dissatisfied",
+    "neutral",
+    "satisfied",
+    "very satisfied",
+]
 SIB_TOPICS = [
     "entertainment",
     "geography",
@@ -54,7 +60,9 @@ def amazon(r, labels) -> Example:
 
 def ag_news(r, labels) -> Example:
     question = "What is this news article about?"
-    return Example("choice", r["text"], question, r["label"], labels, [""] * len(labels))
+    return Example(
+        "choice", r["text"], question, r["label"], labels, [""] * len(labels)
+    )
 
 
 def race(r, labels) -> Example:
@@ -66,12 +74,16 @@ def race(r, labels) -> Example:
 def belebele(r, labels) -> Example:
     answers = [r[f"mc_answer{number}"] for number in range(1, 5)]
     target = int(r["correct_answer_num"]) - 1
-    return Example("choice", r["flores_passage"], r["question"], target, list(LETTERS[:4]), answers)
+    return Example(
+        "choice", r["flores_passage"], r["question"], target, list(LETTERS[:4]), answers
+    )
 
 
 def sib(r, labels) -> Example:
     target = SIB_TOPICS.index(r["category"])
-    return Example("choice", r["text"], "Про що це речення?", target, SIB_TOPICS, [""] * 7)
+    return Example(
+        "choice", r["text"], "Про що це речення?", target, SIB_TOPICS, [""] * 7
+    )
 
 
 def banking(r, labels) -> Example:
@@ -80,7 +92,9 @@ def banking(r, labels) -> Example:
     order = rng.sample([r["label"], *others], 5)
     keys = [labels[i].replace("_", " ") for i in order]
     question = "What does the customer want?"
-    return Example("choice", r["text"], question, order.index(r["label"]), keys, [""] * 5)
+    return Example(
+        "choice", r["text"], question, order.index(r["label"]), keys, [""] * 5
+    )
 
 
 def yelp(r, labels) -> Example:
@@ -133,7 +147,9 @@ def recast(source: Source, rows: Dataset) -> list[Example]:
     return [source.recast(row, labels) for row in rows]
 
 
-def load_training(names=None) -> tuple[dict[str, list[Example]], dict[str, list[Example]]]:
+def load_training(
+    names=None,
+) -> tuple[dict[str, list[Example]], dict[str, list[Example]]]:
     train, val = {}, {}
     for name in names or TRAIN_SOURCES:
         source = TRAIN_SOURCES[name]
@@ -166,6 +182,8 @@ def print_stats() -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--stats", action="store_true", help="print rows per source/type/split")
+    parser.add_argument(
+        "--stats", action="store_true", help="print rows per source/type/split"
+    )
     if parser.parse_args().stats:
         print_stats()

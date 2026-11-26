@@ -20,15 +20,25 @@ def piece(tokenizer, text: str) -> list[int]:
 
 
 def encode(
-    tokenizer, state: str, instructions: str, options: list[str], max_length: int = MAX_LENGTH
+    tokenizer,
+    state: str,
+    instructions: str,
+    options: list[str],
+    max_length: int = MAX_LENGTH,
 ) -> Encoded:
     cls_id, sep_id = tokenizer.cls_token_id, tokenizer.sep_token_id
     instruction_ids = piece(tokenizer, instructions)
     option_ids = [piece(tokenizer, text) for text in options]
     cls_and_two_seps = 3
-    fixed = cls_and_two_seps + len(instruction_ids) + sum(len(ids) + 1 for ids in option_ids)
+    fixed = (
+        cls_and_two_seps
+        + len(instruction_ids)
+        + sum(len(ids) + 1 for ids in option_ids)
+    )
     if fixed > max_length:
-        raise InputTooLongError(f"instructions and options need {fixed} > {max_length} tokens")
+        raise InputTooLongError(
+            f"instructions and options need {fixed} > {max_length} tokens"
+        )
     state_ids = piece(tokenizer, state)[: max_length - fixed]
     input_ids = [cls_id, *state_ids, sep_id, *instruction_ids, sep_id]
     spans = []
